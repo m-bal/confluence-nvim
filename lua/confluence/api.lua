@@ -56,8 +56,9 @@ local function api_request(endpoint, callback)
   if config.auth.type == 'token' and config.auth.email then
     -- Basic auth with email and API token
     local credentials = config.auth.email .. ':' .. config.auth.token
-    -- Use Lua base64 encoding to avoid shell escaping issues
-    local b64 = vim.base64.encode(credentials)
+
+    -- Base64 encode using command (works on all systems with base64 command)
+    local b64 = vim.fn.system('printf "%s" "' .. credentials .. '" | base64 | tr -d "\n"')
     auth_header = 'Authorization: Basic ' .. b64
     debug_log('Using Basic auth with email: ' .. config.auth.email)
   else
