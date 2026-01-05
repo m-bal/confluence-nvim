@@ -3,6 +3,13 @@
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::time::{Duration, Instant};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CacheError {
+    #[error("Invalid cache capacity: {0}")]
+    InvalidCapacity(String),
+}
 
 /// Cached content entry
 #[derive(Debug, Clone)]
@@ -33,14 +40,16 @@ pub struct ContentCache {
 }
 
 impl ContentCache {
-    /// Create a new content cache with specified capacity
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            cache: LruCache::new(
-                NonZeroUsize::new(capacity).expect("Cache capacity must be non-zero"),
-            ),
+    /// Create a new content cache with specified capacity (C-08: Fixed panic)
+    pub fn new(capacity: usize) -> Result<Self, CacheError> {
+        let non_zero_capacity = NonZeroUsize::new(capacity).ok_or_else(|| {
+            CacheError::InvalidCapacity("Capacity must be greater than zero".to_string())
+        })?;
+
+        Ok(Self {
+            cache: LruCache::new(non_zero_capacity),
             default_ttl: Duration::from_secs(900), // 15 minutes
-        }
+        })
     }
 
     /// Get a value from cache if it exists and is not expired
@@ -101,15 +110,21 @@ mod tests {
 
     #[test]
     fn test_cache_creation() {
-        let cache = ContentCache::new(10);
+        let cache = ContentCache::new(10).unwrap();
         assert_eq!(cache.capacity(), 10);
         assert_eq!(cache.len(), 0);
         assert!(cache.is_empty());
     }
 
     #[test]
+    fn test_cache_zero_capacity_error() {
+        let result = ContentCache::new(0);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_cache_insert_and_get() {
-        let mut cache = ContentCache::new(10);
+        let mut cache = ContentCache::new(10).unwrap();
 
         cache.insert("key1".to_string(), "value1".to_string());
 
@@ -119,13 +134,13 @@ mod tests {
 
     #[test]
     fn test_cache_miss() {
-        let mut cache = ContentCache::new(10);
+        let mut cache = ContentCache::new(10).unwrap();
         assert_eq!(cache.get("nonexistent"), None);
     }
 
     #[test]
     fn test_cache_expiration() {
-        let mut cache = ContentCache::new(10);
+        let mut cache = ContentCache::new(10).unwrap();
 
         // Insert with very short TTL
         cache.insert_with_ttl(
@@ -146,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_lru_eviction() {
-        let mut cache = ContentCache::new(2);
+        let mut cache = ContentCache::new(2).unwrap();
 
         cache.insert("key1".to_string(), "value1".to_string());
         cache.insert("key2".to_string(), "value2".to_string());
@@ -160,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_cache_clear() {
-        let mut cache = ContentCache::new(10);
+        let mut cache = ContentCache::new(10).unwrap();
 
         cache.insert("key1".to_string(), "value1".to_string());
         cache.insert("key2".to_string(), "value2".to_string());

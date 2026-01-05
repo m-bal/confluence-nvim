@@ -51,7 +51,15 @@ impl RetryPolicy {
                     // Retry on 429 (rate limit) and 5xx errors
                     if status.as_u16() == 429 || status.is_server_error() {
                         if attempt >= self.max_retries {
-                            return Ok(resp);
+                            // C-05: Return error instead of Ok(error_response)
+                            return Err(ApiError::ServerError {
+                                status: status.as_u16(),
+                                message: format!(
+                                    "Max retries ({}) exceeded. Last status: {}",
+                                    self.max_retries,
+                                    status
+                                ),
+                            });
                         }
 
                         // Extract Retry-After header for rate limiting

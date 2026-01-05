@@ -1,7 +1,41 @@
 //! AST representation of Confluence content
 
+use once_cell::sync::Lazy;
 use scraper::{ElementRef, Html, Node, Selector};
 use thiserror::Error;
+
+// C-06: Parse selectors once at startup using lazy_static
+static LI_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("li").expect("Invalid hardcoded selector 'li'")
+});
+
+static TH_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("th").expect("Invalid hardcoded selector 'th'")
+});
+
+static TR_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("tbody tr, tr").expect("Invalid hardcoded selector 'tbody tr, tr'")
+});
+
+static TD_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("td").expect("Invalid hardcoded selector 'td'")
+});
+
+static AC_PARAM_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("ac\\:parameter").expect("Invalid hardcoded selector 'ac:parameter'")
+});
+
+static AC_BODY_SELECTOR: Lazy<Selector> = Lazy::new(|| {
+    Selector::parse("ac\\:plain-text-body, ac\\:rich-text-body")
+        .expect("Invalid hardcoded selector for ac body")
+});
+
+// Security limits
+const MAX_HTML_SIZE: usize = 5 * 1024 * 1024; // 5MB (H-10)
+const MAX_PARSE_DEPTH: usize = 100; // C-07
+
+// Dangerous HTML tags to filter (H-02)
+const DANGEROUS_TAGS: &[&str] = &["script", "style", "iframe", "object", "embed", "form"];
 
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -10,6 +44,12 @@ pub enum ParseError {
 
     #[error("Missing required element: {0}")]
     MissingElement(String),
+
+    #[error("HTML too large: {0}")]
+    HtmlTooLarge(String),
+
+    #[error("HTML nesting too deep: {0}")]
+    NestingTooDeep(String),
 }
 
 /// Abstract Syntax Tree for Confluence content
@@ -35,14 +75,24 @@ pub enum AstNode {
 }
 
 impl ConfluenceAst {
-    /// Parse Confluence storage format (XHTML) into AST
+    /// Parse Confluence storage format (XHTML) into AST (C-07, H-10: Added size and depth limits)
     pub fn parse(html: &str) -> Result<Self, ParseError> {
+        // H-10: Check HTML size limit
+        if html.len() > MAX_HTML_SIZE {
+            return Err(ParseError::HtmlTooLarge(format!(
+                "HTML size {} bytes exceeds maximum of {} bytes ({}MB)",
+                html.len(),
+                MAX_HTML_SIZE,
+                MAX_HTML_SIZE / (1024 * 1024)
+            )));
+        }
+
         let document = Html::parse_fragment(html);
         let root = document.root_element();
 
         let mut nodes = Vec::new();
         for child in root.children() {
-            if let Some(node) = Self::parse_node(child) {
+            if let Some(node) = Self::parse_node_with_depth(child, 0)? {
                 nodes.push(node);
             }
         }
@@ -52,90 +102,136 @@ impl ConfluenceAst {
         })
     }
 
-    fn parse_node(node: ego_tree::NodeRef<Node>) -> Option<AstNode> {
+    /// Parse node with depth tracking (C-07)
+    fn parse_node_with_depth(
+        node: ego_tree::NodeRef<Node>,
+        depth: usize,
+    ) -> Result<Option<AstNode>, ParseError> {
+        if depth > MAX_PARSE_DEPTH {
+            return Err(ParseError::NestingTooDeep(format!(
+                "HTML nesting exceeds maximum depth of {}",
+                MAX_PARSE_DEPTH
+            )));
+        }
+
         match node.value() {
             Node::Text(text) => {
                 let content = text.trim();
                 if content.is_empty() {
-                    None
+                    Ok(None)
                 } else {
-                    Some(AstNode::Text(content.to_string()))
+                    Ok(Some(AstNode::Text(content.to_string())))
                 }
             }
             Node::Element(_) => {
                 if let Some(element_ref) = ElementRef::wrap(node) {
-                    Self::parse_element_ref(element_ref)
+                    Self::parse_element_ref_with_depth(element_ref, depth + 1)
                 } else {
-                    None
+                    Ok(None)
                 }
             }
-            _ => None,
+            _ => Ok(None),
         }
     }
 
-    fn parse_element_ref(element: ElementRef) -> Option<AstNode> {
+    /// Legacy parse_node for compatibility - redirects to depth-tracked version
+    fn parse_node(node: ego_tree::NodeRef<Node>) -> Option<AstNode> {
+        Self::parse_node_with_depth(node, 0).ok().flatten()
+    }
+
+    /// Parse element with depth tracking and security filtering (H-02)
+    fn parse_element_ref_with_depth(
+        element: ElementRef,
+        depth: usize,
+    ) -> Result<Option<AstNode>, ParseError> {
         let tag = element.value().name();
 
-        match tag {
+        // H-02: Filter dangerous tags
+        if DANGEROUS_TAGS.contains(&tag) {
+            tracing::warn!("Filtered out dangerous HTML tag: {}", tag);
+            return Ok(None);
+        }
+
+        let result = match tag {
             // Headings
             "h1" => Some(AstNode::Heading {
                 level: 1,
-                content: Self::parse_element_children(element),
+                content: Self::parse_element_children_with_depth(element, depth)?,
             }),
             "h2" => Some(AstNode::Heading {
                 level: 2,
-                content: Self::parse_element_children(element),
+                content: Self::parse_element_children_with_depth(element, depth)?,
             }),
             "h3" => Some(AstNode::Heading {
                 level: 3,
-                content: Self::parse_element_children(element),
+                content: Self::parse_element_children_with_depth(element, depth)?,
             }),
             "h4" => Some(AstNode::Heading {
                 level: 4,
-                content: Self::parse_element_children(element),
+                content: Self::parse_element_children_with_depth(element, depth)?,
             }),
             "h5" => Some(AstNode::Heading {
                 level: 5,
-                content: Self::parse_element_children(element),
+                content: Self::parse_element_children_with_depth(element, depth)?,
             }),
             "h6" => Some(AstNode::Heading {
                 level: 6,
-                content: Self::parse_element_children(element),
+                content: Self::parse_element_children_with_depth(element, depth)?,
             }),
 
             // Paragraph
-            "p" => Some(AstNode::Paragraph(Self::parse_element_children(element))),
+            "p" => Some(AstNode::Paragraph(
+                Self::parse_element_children_with_depth(element, depth)?,
+            )),
 
             // Text formatting
-            "strong" | "b" => Some(AstNode::Bold(Self::parse_element_children(element))),
-            "em" | "i" => Some(AstNode::Italic(Self::parse_element_children(element))),
+            "strong" | "b" => Some(AstNode::Bold(
+                Self::parse_element_children_with_depth(element, depth)?,
+            )),
+            "em" | "i" => Some(AstNode::Italic(
+                Self::parse_element_children_with_depth(element, depth)?,
+            )),
             "code" => {
                 let text = element.text().collect::<String>();
                 Some(AstNode::Code(text))
             }
 
-            // Links
+            // Links (H-11: Handle empty href)
             "a" => {
-                let url = element.value().attr("href").unwrap_or("").to_string();
-                Some(AstNode::Link {
-                    url,
-                    text: Self::parse_element_children(element),
-                })
+                let url = element.value().attr("href").filter(|s| !s.is_empty());
+
+                match url {
+                    Some(url) => Some(AstNode::Link {
+                        url: url.to_string(),
+                        text: Self::parse_element_children_with_depth(element, depth)?,
+                    }),
+                    None => {
+                        // Link with no href - just return text content
+                        let children = Self::parse_element_children_with_depth(element, depth)?;
+                        if children.len() == 1 {
+                            Some(children.into_iter().next().unwrap())
+                        } else if !children.is_empty() {
+                            Some(AstNode::Paragraph(children))
+                        } else {
+                            None
+                        }
+                    }
+                }
             }
 
             // Lists
-            "ul" => Some(Self::parse_list(element, false)),
-            "ol" => Some(Self::parse_list(element, true)),
+            "ul" => Some(Self::parse_list_with_depth(element, false, depth)?),
+            "ol" => Some(Self::parse_list_with_depth(element, true, depth)?),
 
             // Tables
-            "table" => Self::parse_table(element),
+            "table" => Self::parse_table_with_depth(element, depth)?,
 
             // Confluence macros
-            tag if tag.starts_with("ac:") => Self::parse_macro(element),
+            tag if tag.starts_with("ac:") => Self::parse_macro_with_depth(element, depth)?,
 
             // Skip unknown elements but parse their children
             _ => {
-                let children = Self::parse_element_children(element);
+                let children = Self::parse_element_children_with_depth(element, depth)?;
                 if children.len() == 1 {
                     Some(children.into_iter().next().unwrap())
                 } else if !children.is_empty() {
@@ -144,46 +240,74 @@ impl ConfluenceAst {
                     None
                 }
             }
-        }
+        };
+
+        Ok(result)
     }
 
-    fn parse_element_children(element: ElementRef) -> Vec<AstNode> {
+    /// Legacy parse_element_ref for compatibility
+    fn parse_element_ref(element: ElementRef) -> Option<AstNode> {
+        Self::parse_element_ref_with_depth(element, 0).ok().flatten()
+    }
+
+    /// Parse element children with depth tracking
+    fn parse_element_children_with_depth(
+        element: ElementRef,
+        depth: usize,
+    ) -> Result<Vec<AstNode>, ParseError> {
         element
             .children()
-            .filter_map(|child| Self::parse_node(child))
+            .filter_map(|child| Self::parse_node_with_depth(child, depth).transpose())
             .collect()
     }
 
-    fn parse_list(element: ElementRef, ordered: bool) -> AstNode {
-        let li_selector = Selector::parse("li").unwrap();
-        let items: Vec<Vec<AstNode>> = element
-            .select(&li_selector)
-            .map(|li| Self::parse_element_children(li))
-            .collect();
-
-        AstNode::List { ordered, items }
+    /// Legacy version for compatibility
+    fn parse_element_children(element: ElementRef) -> Vec<AstNode> {
+        Self::parse_element_children_with_depth(element, 0).unwrap_or_default()
     }
 
-    fn parse_table(element: ElementRef) -> Option<AstNode> {
-        let th_selector = Selector::parse("th").unwrap();
-        let tr_selector = Selector::parse("tbody tr, tr").unwrap();
-        let td_selector = Selector::parse("td").unwrap();
+    /// Parse list with depth tracking (C-06: Uses static selector)
+    fn parse_list_with_depth(
+        element: ElementRef,
+        ordered: bool,
+        depth: usize,
+    ) -> Result<AstNode, ParseError> {
+        let items: Vec<Vec<AstNode>> = element
+            .select(&*LI_SELECTOR)
+            .map(|li| Self::parse_element_children_with_depth(li, depth))
+            .collect::<Result<Vec<_>, _>>()?;
 
+        Ok(AstNode::List { ordered, items })
+    }
+
+    /// Legacy version
+    fn parse_list(element: ElementRef, ordered: bool) -> AstNode {
+        Self::parse_list_with_depth(element, ordered, 0).unwrap_or(AstNode::List {
+            ordered,
+            items: vec![],
+        })
+    }
+
+    /// Parse table with depth tracking (C-06: Uses static selectors)
+    fn parse_table_with_depth(
+        element: ElementRef,
+        _depth: usize,
+    ) -> Result<Option<AstNode>, ParseError> {
         // Extract headers
         let headers: Vec<String> = element
-            .select(&th_selector)
+            .select(&*TH_SELECTOR)
             .map(|th| th.text().collect::<String>().trim().to_string())
             .collect();
 
         // Extract rows
         let rows: Vec<Vec<String>> = element
-            .select(&tr_selector)
+            .select(&*TR_SELECTOR)
             .filter(|tr| {
                 // Skip header row
-                tr.select(&th_selector).count() == 0
+                tr.select(&*TH_SELECTOR).count() == 0
             })
             .map(|tr| {
-                tr.select(&td_selector)
+                tr.select(&*TD_SELECTOR)
                     .map(|td| td.text().collect::<String>().trim().to_string())
                     .collect()
             })
@@ -191,19 +315,27 @@ impl ConfluenceAst {
             .collect();
 
         if headers.is_empty() && rows.is_empty() {
-            None
+            Ok(None)
         } else {
-            Some(AstNode::Table { headers, rows })
+            Ok(Some(AstNode::Table { headers, rows }))
         }
     }
 
-    fn parse_macro(element: ElementRef) -> Option<AstNode> {
+    /// Legacy version
+    fn parse_table(element: ElementRef) -> Option<AstNode> {
+        Self::parse_table_with_depth(element, 0).ok().flatten()
+    }
+
+    /// Parse macro with depth tracking (C-06: Uses static selectors)
+    fn parse_macro_with_depth(
+        element: ElementRef,
+        _depth: usize,
+    ) -> Result<Option<AstNode>, ParseError> {
         let name = element.value().attr("ac:name").unwrap_or("").to_string();
 
         // Extract parameters
-        let param_selector = Selector::parse("ac\\:parameter").unwrap();
         let params: Vec<(String, String)> = element
-            .select(&param_selector)
+            .select(&*AC_PARAM_SELECTOR)
             .filter_map(|param| {
                 let key = param.value().attr("ac:name")?.to_string();
                 let value = param.text().collect::<String>();
@@ -212,14 +344,18 @@ impl ConfluenceAst {
             .collect();
 
         // Extract body
-        let body_selector = Selector::parse("ac\\:plain-text-body, ac\\:rich-text-body").unwrap();
         let body = element
-            .select(&body_selector)
+            .select(&*AC_BODY_SELECTOR)
             .next()
             .map(|b| b.text().collect::<String>())
             .unwrap_or_default();
 
-        Some(AstNode::Macro { name, params, body })
+        Ok(Some(AstNode::Macro { name, params, body }))
+    }
+
+    /// Legacy version
+    fn parse_macro(element: ElementRef) -> Option<AstNode> {
+        Self::parse_macro_with_depth(element, 0).ok().flatten()
     }
 }
 

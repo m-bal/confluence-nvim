@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn test_cache_initialization() {
-        let cache = ContentCache::new(50);
+        let cache = ContentCache::new(50).unwrap();
         assert_eq!(cache.capacity(), 50);
         assert!(cache.is_empty());
     }
