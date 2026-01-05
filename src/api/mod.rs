@@ -39,6 +39,8 @@ pub struct Page {
     #[serde(rename = "type")]
     pub page_type: String,
     pub body: PageBody,
+    #[serde(default)]
+    pub space: Option<SpaceInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +52,45 @@ pub struct PageBody {
 pub struct StorageFormat {
     pub value: String,
     pub representation: String,
+}
+
+/// Confluence space
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Space {
+    pub id: i64,
+    pub key: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub space_type: String,
+}
+
+/// Space information embedded in pages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceInfo {
+    pub key: String,
+    pub name: String,
+}
+
+/// Search result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub result_type: String,
+    #[serde(default)]
+    pub excerpt: Option<String>,
+    #[serde(default)]
+    pub space: Option<SpaceInfo>,
+}
+
+/// Paginated response wrapper
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginatedResponse<T> {
+    pub results: Vec<T>,
+    pub start: usize,
+    pub limit: usize,
+    pub size: usize,
 }
 
 /// Confluence API client
@@ -82,7 +123,7 @@ impl ConfluenceClient {
     /// Fetch a page by ID
     pub async fn fetch_page(&self, page_id: &str) -> Result<Page, ApiError> {
         let url = format!(
-            "{}/rest/api/content/{}?expand=body.storage",
+            "{}/rest/api/content/{}?expand=body.storage,space",
             self.base_url, page_id
         );
 
@@ -95,6 +136,73 @@ impl ConfluenceClient {
             response.json::<Page>().await.map_err(|e| {
                 ApiError::ParseError(format!("Failed to parse page response: {}", e))
             })
+        } else {
+            self.handle_error_response(response).await
+        }
+    }
+
+    /// List all spaces
+    pub async fn list_spaces(&self) -> Result<Vec<Space>, ApiError> {
+        let url = format!("{}/rest/api/space", self.base_url);
+
+        let response = self
+            .retry_policy
+            .execute(|| self.get(&url))
+            .await?;
+
+        if response.status().is_success() {
+            let paginated: PaginatedResponse<Space> = response.json().await.map_err(|e| {
+                ApiError::ParseError(format!("Failed to parse spaces response: {}", e))
+            })?;
+
+            Ok(paginated.results)
+        } else {
+            self.handle_error_response(response).await
+        }
+    }
+
+    /// List pages in a space
+    pub async fn list_pages(&self, space_key: &str) -> Result<Vec<Page>, ApiError> {
+        let url = format!(
+            "{}/rest/api/space/{}/content/page?expand=space",
+            self.base_url, space_key
+        );
+
+        let response = self
+            .retry_policy
+            .execute(|| self.get(&url))
+            .await?;
+
+        if response.status().is_success() {
+            let paginated: PaginatedResponse<Page> = response.json().await.map_err(|e| {
+                ApiError::ParseError(format!("Failed to parse pages response: {}", e))
+            })?;
+
+            Ok(paginated.results)
+        } else {
+            self.handle_error_response(response).await
+        }
+    }
+
+    /// Search Confluence content
+    pub async fn search(&self, cql: &str) -> Result<Vec<SearchResult>, ApiError> {
+        let url = format!(
+            "{}/rest/api/content/search?cql={}",
+            self.base_url,
+            urlencoding::encode(cql)
+        );
+
+        let response = self
+            .retry_policy
+            .execute(|| self.get(&url))
+            .await?;
+
+        if response.status().is_success() {
+            let paginated: PaginatedResponse<SearchResult> = response.json().await.map_err(|e| {
+                ApiError::ParseError(format!("Failed to parse search response: {}", e))
+            })?;
+
+            Ok(paginated.results)
         } else {
             self.handle_error_response(response).await
         }
