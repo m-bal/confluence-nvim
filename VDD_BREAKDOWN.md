@@ -148,42 +148,146 @@
   - AC: Handle attachment links
   - AC: Preserve external URLs
 
-### Issue 3.2: Markdown Conversion
-**Acceptance Criteria**: Convert parsed Confluence content to GitHub Flavored Markdown.
+### Issue 3.2: Rich Terminal Rendering Engine
+**Acceptance Criteria**: Convert parsed Confluence content to visually accurate terminal representation using Neovim features.
 
-- **Sub-issue 3.2.1**: Basic element conversion
-  - AC: Headings (h1-h6) → Markdown headers
-  - AC: Paragraphs, bold, italic, strikethrough
-  - AC: Lists (ordered, unordered, nested)
+- **Sub-issue 3.2.1**: Basic element rendering with highlights
+  - AC: Headings use custom highlight groups with colors
+  - AC: Bold/italic/strikethrough use terminal attributes
+  - AC: Lists with proper Unicode bullets (•, ◦, ▪)
+  - AC: Paragraphs with proper spacing
 
-- **Sub-issue 3.2.2**: Advanced formatting
-  - AC: Tables → GFM tables with alignment
-  - AC: Code blocks with language detection
-  - AC: Blockquotes
+- **Sub-issue 3.2.2**: Macro panel rendering (info, warning, error, note, success)
+  - AC: Box-drawing characters for panel borders (┌─┐│└┘)
+  - AC: Color-coded panels matching Confluence palette
+  - AC: Icons for macro types (ℹ ⚠ ✗ 📝 ✓)
+  - AC: Proper highlight groups per macro type
 
-- **Sub-issue 3.2.3**: Macro translation
-  - AC: Info/Warning macros → Markdown admonitions
-  - AC: Code macros → fenced code blocks
-  - AC: Status macros → emoji or text indicators
-  - AC: Unknown macros → clearly marked placeholders
+- **Sub-issue 3.2.3**: Code block rendering with syntax highlighting
+  - AC: Box-drawing frame around code blocks
+  - AC: Language label in header with proper formatting
+  - AC: Line numbers (if enabled in Confluence)
+  - AC: TreeSitter syntax highlighting injection
+  - AC: Fallback to vim syntax if TreeSitter unavailable
 
-### Issue 3.3: Neovim Buffer Rendering
-**Acceptance Criteria**: Display rendered content in Neovim buffer with syntax highlighting.
+- **Sub-issue 3.2.4**: Table rendering with box-drawing
+  - AC: Tables use Unicode box-drawing (┌─┬┐├─┼┤└─┴┘)
+  - AC: Column width calculation and alignment
+  - AC: Header row highlighting
+  - AC: Cell content wrapping for long text
+
+- **Sub-issue 3.2.5**: Status lozenge rendering
+  - AC: Virtual text for inline status indicators
+  - AC: Color-coded based on status type
+  - AC: Emoji or Unicode symbols (● ◆ ○)
+  - AC: Custom highlight groups per status color
+
+### Issue 3.3: Neovim Buffer Integration
+**Acceptance Criteria**: Display rendered content in Neovim buffer with extmarks and virtual text.
 
 - **Sub-issue 3.3.1**: Buffer creation and management
   - AC: Create scratch buffer for Confluence content
-  - AC: Set proper `buftype` and `bufhidden` options
-  - AC: Unique buffer naming scheme
+  - AC: Set proper `buftype=nofile` and `bufhidden=hide`
+  - AC: Unique buffer naming scheme (`confluence://<page-id>`)
+  - AC: Buffer-local variables for page metadata
 
-- **Sub-issue 3.3.2**: Syntax highlighting
-  - AC: Apply Markdown syntax highlighting
-  - AC: Custom highlight groups for Confluence elements
-  - AC: Syntax highlighting for code blocks
+- **Sub-issue 3.3.2**: Extmark-based highlighting system
+  - AC: Create namespaced extmarks for all visual elements
+  - AC: Apply highlight groups to panels, code blocks, tables
+  - AC: Virtual text for icons and decorations
+  - AC: Preserve highlights across buffer updates
 
-- **Sub-issue 3.3.3**: Buffer metadata and navigation
-  - AC: Store Confluence page ID in buffer variable
+- **Sub-issue 3.3.3**: Syntax highlighting integration
+  - AC: TreeSitter syntax injection for code blocks
+  - AC: Markdown-style highlighting for basic text
+  - AC: Custom syntax groups for Confluence-specific elements
+  - AC: Fallback highlighting if TreeSitter unavailable
+
+- **Sub-issue 3.3.4**: Buffer metadata and navigation
+  - AC: Store Confluence page ID in `b:confluence_page_id`
+  - AC: Store page title in `b:confluence_title`
   - AC: Implement `:ConfluenceRefresh` to reload
-  - AC: Display page title and breadcrumbs
+  - AC: Display page title and breadcrumbs in statusline
+
+### Issue 3.4: Image and Attachment Rendering
+**Acceptance Criteria**: Display images and attachments with terminal protocol support and graceful fallbacks.
+
+- **Sub-issue 3.4.1**: Terminal image protocol detection
+  - AC: Detect Kitty graphics protocol support
+  - AC: Detect iTerm2 inline images support
+  - AC: Detect Sixel support
+  - AC: Fallback to ASCII art or placeholder
+
+- **Sub-issue 3.4.2**: Image download and caching
+  - AC: Download images from Confluence API with auth
+  - AC: Cache downloaded images locally (XDG_CACHE_HOME)
+  - AC: Respect Content-Type and validate image formats
+  - AC: Handle download failures gracefully
+
+- **Sub-issue 3.4.3**: Image encoding for terminal protocols
+  - AC: Encode images using Kitty graphics protocol
+  - AC: Encode images using iTerm2 inline image protocol
+  - AC: Encode images using Sixel format
+  - AC: Generate ASCII art for fallback terminals
+
+- **Sub-issue 3.4.4**: Image display in Neovim
+  - AC: Display images inline using terminal escape sequences
+  - AC: Show image metadata (filename, dimensions)
+  - AC: Provide keybinding to open in external viewer
+  - AC: Floating window for enlarged image preview
+  - AC: Placeholder rendering for unsupported terminals
+
+- **Sub-issue 3.4.5**: Attachment handling
+  - AC: List non-image attachments with file info
+  - AC: Provide command to download attachments
+  - AC: Link to open attachments in external apps
+
+### Issue 3.5: Comment System Integration
+**Acceptance Criteria**: Fetch and render both page and inline comments with threading.
+
+- **Sub-issue 3.5.1**: Comment API integration
+  - AC: Fetch page comments via `/rest/api/content/{id}/child/comment`
+  - AC: Fetch inline comments with position data
+  - AC: Parse comment threads and replies
+  - AC: Handle pagination for large comment threads
+
+- **Sub-issue 3.5.2**: Page comment rendering
+  - AC: Render comments section at bottom of page
+  - AC: Threaded display with proper indentation
+  - AC: Show author, timestamp (relative), and content
+  - AC: Use Unicode characters for thread indicators (↳)
+  - AC: Format timestamps as relative (e.g., "2 hours ago")
+
+- **Sub-issue 3.5.3**: Inline comment indicators
+  - AC: Use virtual text to show comment count per line
+  - AC: Icon or emoji for inline comment presence (💬)
+  - AC: Highlight lines with inline comments
+
+- **Sub-issue 3.5.4**: Inline comment popup display
+  - AC: Show floating window on CursorHold over commented line
+  - AC: Display comment author and content in popup
+  - AC: Handle multiple comments per line
+  - AC: Keybinding to toggle comment popup manually
+
+### Issue 3.6: Link Handling and Navigation
+**Acceptance Criteria**: Preserve and make Confluence links navigable within Neovim.
+
+- **Sub-issue 3.6.1**: Link parsing and classification
+  - AC: Detect internal Confluence page links
+  - AC: Detect attachment links
+  - AC: Detect external URLs
+  - AC: Detect anchor links within page
+
+- **Sub-issue 3.6.2**: Link rendering
+  - AC: Underline links in buffer
+  - AC: Color-code by link type (internal vs external)
+  - AC: Show link destination in statusline on hover
+
+- **Sub-issue 3.6.3**: Link navigation
+  - AC: `gx` or custom mapping to follow links
+  - AC: Open internal links in new Confluence buffer
+  - AC: Open external links in browser
+  - AC: Jump to anchors within current page
 
 ---
 

@@ -1,0 +1,30 @@
+# Clippy configuration for confluence-nvim
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 30
+
+# Disallowed methods (security-sensitive)
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "Use controlled configuration instead" },
+]
+
+# Disallowed types
+disallowed-types = []
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Too many arguments threshold
+too-many-arguments-threshold = 7
+
+# Too many lines threshold
+too-many-lines-threshold = 300
+
+# Avoid breaking exported API
+avoid-breaking-exported-api = false
+
+# Allow expect used for clearer error messages in tests
+allow-expect-in-tests = true
+
+# Allow unwrap in tests
+allow-unwrap-in-tests = true

@@ -1,0 +1,34 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Neovim
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+*.profraw
+
+# Cache
+.cache/
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log

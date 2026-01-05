@@ -1,0 +1,74 @@
+[package]
+name = "confluence-nvim"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Confluence Neovim Contributors"]
+license = "MIT OR Apache-2.0"
+description = "A Neovim plugin for reading Confluence documentation with native rendering"
+repository = "https://github.com/m-bal/confluence-nvim"
+keywords = ["neovim", "confluence", "documentation", "vim-plugin"]
+categories = ["text-editors", "api-bindings"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Neovim integration
+nvim-oxi = { version = "0.5", features = ["neovim-0-10"] }
+
+# Async runtime
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "gzip"], default-features = false }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# XML/HTML parsing
+quick-xml = { version = "0.37", features = ["serialize"] }
+scraper = "0.20"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Caching
+lru = "0.12"
+
+# Image processing
+image = { version = "0.25", features = ["png", "jpeg", "gif"], default-features = false }
+base64 = "0.22"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+mockito = "1.5"
+wiremock = "0.6"
+proptest = "1.5"
+tempfile = "3.13"
+
+# Coverage
+criterion = "0.5"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.test]
+opt-level = 1
