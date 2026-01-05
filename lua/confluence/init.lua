@@ -8,6 +8,13 @@ local M = {}
 --- Optional: cache_enabled (boolean), cache_ttl (number), cache_size (number)
 function M.setup(opts)
   api.setup(opts)
+
+  -- Auto-load Telescope extension if Telescope is available
+  local has_telescope, telescope = pcall(require, 'telescope')
+  if has_telescope then
+    telescope.load_extension('confluence')
+  end
+
   vim.notify('Confluence plugin initialized', vim.log.levels.INFO)
 end
 
