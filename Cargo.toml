@@ -30,6 +30,7 @@ serde_json = "1.0"
 # XML/HTML parsing
 quick-xml = { version = "0.37", features = ["serialize"] }
 scraper = "0.20"
+ego-tree = "0.6"
 
 # Error handling
 thiserror = "1.0"
