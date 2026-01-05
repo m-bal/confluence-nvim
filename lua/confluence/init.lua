@@ -72,6 +72,13 @@ end
 
 --- Register Neovim commands
 function M.register_commands()
+  -- Main entry point - opens space browser
+  vim.api.nvim_create_user_command('Confluence', function()
+    M.browse_spaces()
+  end, {
+    desc = 'Open Confluence space browser',
+  })
+
   vim.api.nvim_create_user_command('ConfluenceOpen', function(args)
     M.open_page(args.args)
   end, {
@@ -79,11 +86,24 @@ function M.register_commands()
     desc = 'Open a Confluence page by ID or URL',
   })
 
+  vim.api.nvim_create_user_command('ConfluenceSpace', function(args)
+    M.browse_pages(args.args)
+  end, {
+    nargs = '?',
+    desc = 'Browse pages in a space',
+  })
+
   vim.api.nvim_create_user_command('ConfluenceSearch', function(args)
     M.search(args.args)
   end, {
     nargs = '*',
     desc = 'Search Confluence pages',
+  })
+
+  vim.api.nvim_create_user_command('ConfluenceRecent', function()
+    M.recent_pages()
+  end, {
+    desc = 'Show recent Confluence pages',
   })
 
   vim.api.nvim_create_user_command('ConfluenceRefresh', function()
@@ -134,6 +154,39 @@ function M.setup_highlights()
   end
 end
 
+--- Browse Confluence spaces (telescope picker)
+function M.browse_spaces()
+  if not state.initialized then
+    vim.notify('Confluence: Plugin not initialized. Call setup() first.', vim.log.levels.ERROR)
+    return
+  end
+
+  local ok, telescope = pcall(require, 'confluence.telescope')
+  if not ok then
+    vim.notify('Confluence: Telescope integration not available', vim.log.levels.ERROR)
+    return
+  end
+
+  telescope.spaces()
+end
+
+--- Browse pages in a space
+---@param space_key string|nil Space key (optional)
+function M.browse_pages(space_key)
+  if not state.initialized then
+    vim.notify('Confluence: Plugin not initialized. Call setup() first.', vim.log.levels.ERROR)
+    return
+  end
+
+  local ok, telescope = pcall(require, 'confluence.telescope')
+  if not ok then
+    vim.notify('Confluence: Telescope integration not available', vim.log.levels.ERROR)
+    return
+  end
+
+  telescope.pages({ space_key = space_key })
+end
+
 --- Open a Confluence page
 ---@param page_id_or_url string Page ID or URL
 function M.open_page(page_id_or_url)
@@ -142,20 +195,46 @@ function M.open_page(page_id_or_url)
     return
   end
 
-  -- TODO: Implement page opening logic
-  vim.notify('Opening Confluence page: ' .. page_id_or_url, vim.log.levels.INFO)
+  -- Extract page ID from URL if needed
+  local page_id = page_id_or_url:match('%d+$') or page_id_or_url
+
+  -- TODO: Call Rust API to fetch page
+  -- TODO: Render page in buffer
+
+  vim.notify('Opening Confluence page: ' .. page_id, vim.log.levels.INFO)
 end
 
 --- Search Confluence pages
----@param query string Search query
+---@param query string|nil Search query
 function M.search(query)
   if not state.initialized then
     vim.notify('Confluence: Plugin not initialized. Call setup() first.', vim.log.levels.ERROR)
     return
   end
 
-  -- TODO: Implement search logic
-  vim.notify('Searching Confluence: ' .. query, vim.log.levels.INFO)
+  local ok, telescope = pcall(require, 'confluence.telescope')
+  if not ok then
+    vim.notify('Confluence: Telescope integration not available', vim.log.levels.ERROR)
+    return
+  end
+
+  telescope.search({ query = query })
+end
+
+--- Show recent pages
+function M.recent_pages()
+  if not state.initialized then
+    vim.notify('Confluence: Plugin not initialized. Call setup() first.', vim.log.levels.ERROR)
+    return
+  end
+
+  local ok, telescope = pcall(require, 'confluence.telescope')
+  if not ok then
+    vim.notify('Confluence: Telescope integration not available', vim.log.levels.ERROR)
+    return
+  end
+
+  telescope.recent()
 end
 
 --- Refresh the current Confluence page
