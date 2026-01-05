@@ -4,6 +4,52 @@ local M = {}
 local config = nil
 local debug_mode = false
 
+--- Base64 encoding lookup table
+local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+--- Pure Lua base64 encoder (avoids shell escaping issues)
+---@param str string Input string to encode
+---@return string Base64 encoded string
+local function base64_encode(str)
+  local result = {}
+  local padding = ''
+
+  -- Process 3 bytes at a time
+  for i = 1, #str, 3 do
+    local b1, b2, b3 = str:byte(i, i + 2)
+
+    -- First 6 bits
+    local n1 = bit.rshift(b1, 2)
+    result[#result + 1] = b64chars:sub(n1 + 1, n1 + 1)
+
+    -- Next 6 bits
+    local n2 = bit.lshift(bit.band(b1, 0x03), 4)
+    if b2 then
+      n2 = bit.bor(n2, bit.rshift(b2, 4))
+      result[#result + 1] = b64chars:sub(n2 + 1, n2 + 1)
+
+      -- Next 6 bits
+      local n3 = bit.lshift(bit.band(b2, 0x0F), 2)
+      if b3 then
+        n3 = bit.bor(n3, bit.rshift(b3, 6))
+        result[#result + 1] = b64chars:sub(n3 + 1, n3 + 1)
+
+        -- Last 6 bits
+        local n4 = bit.band(b3, 0x3F)
+        result[#result + 1] = b64chars:sub(n4 + 1, n4 + 1)
+      else
+        result[#result + 1] = b64chars:sub(n3 + 1, n3 + 1)
+        padding = '='
+      end
+    else
+      result[#result + 1] = b64chars:sub(n2 + 1, n2 + 1)
+      padding = '=='
+    end
+  end
+
+  return table.concat(result) .. padding
+end
+
 --- Setup API client with configuration
 ---@param opts table Configuration options
 function M.setup(opts)
@@ -56,9 +102,7 @@ local function api_request(endpoint, callback)
   if config.auth.type == 'token' and config.auth.email then
     -- Basic auth with email and API token
     local credentials = config.auth.email .. ':' .. config.auth.token
-
-    -- Base64 encode using command (works on all systems with base64 command)
-    local b64 = vim.fn.system('printf "%s" "' .. credentials .. '" | base64 | tr -d "\n"')
+    local b64 = base64_encode(credentials)
     auth_header = 'Authorization: Basic ' .. b64
     debug_log('Using Basic auth with email: ' .. config.auth.email)
   else
