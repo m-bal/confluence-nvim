@@ -67,6 +67,12 @@ function M.setup(opts)
     error('Only HTTPS URLs are allowed for security')
   end
 
+  -- Trim whitespace from token and email (important if obtained via vim.fn.system)
+  opts.auth.token = vim.trim(opts.auth.token)
+  if opts.auth.email then
+    opts.auth.email = vim.trim(opts.auth.email)
+  end
+
   -- Enable debug mode if requested
   if opts.debug then
     debug_mode = true
