@@ -56,7 +56,6 @@ url = "2.5"
 
 # Lazy static initialization
 once_cell = "1.19"
-lazy_static = "1.4"
 
 [dev-dependencies]
 # Testing
