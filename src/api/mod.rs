@@ -100,6 +100,7 @@ pub struct PaginatedResponse<T> {
 }
 
 /// Confluence API client
+#[derive(Clone)]
 pub struct ConfluenceClient {
     base_url: String,
     auth: AuthConfig,
