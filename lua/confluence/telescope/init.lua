@@ -37,7 +37,7 @@ function M.spaces(opts)
           entry_maker = function(space)
             return {
               value = space,
-              display = string.format('[S] %-10s  %s', space.key, space.name),
+              display = string.format('🏢 %-10s  %s', space.key, space.name),
               ordinal = space.key .. ' ' .. space.name,
             }
           end,
@@ -97,7 +97,7 @@ function M.pages(opts)
           entry_maker = function(page)
             return {
               value = page,
-              display = string.format('[P] %s', page.title),
+              display = string.format('📄 %s', page.title),
               ordinal = page.title,
             }
           end,
@@ -164,13 +164,13 @@ function M.search(opts)
           finder = finders.new_table({
             results = results,
             entry_maker = function(result)
-              local space_info = result.space and ('[' .. result.space.key .. '] ') or ''
+              local space_info = result.space and ('🏢 ' .. result.space.key .. ' ') or ''
               local excerpt = result.excerpt or ''
               excerpt = excerpt:gsub('<[^>]+>', ''):sub(1, 80) -- Strip HTML and truncate
 
               return {
                 value = result,
-                display = string.format('%s%s\n  %s', space_info, result.title, excerpt),
+                display = string.format('🔍 %s%s\n  %s', space_info, result.title, excerpt),
                 ordinal = result.title .. ' ' .. excerpt,
               }
             end,

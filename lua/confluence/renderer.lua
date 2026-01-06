@@ -15,6 +15,146 @@ local function decode_entities(text)
   return result
 end
 
+--- Create a bordered box around content
+---@param content string Content to box
+---@param title string Box title (e.g., "INFO", "WARNING", "CODE")
+---@param width number Box width
+---@return string Boxed content
+local function create_box(content, title, width)
+  width = width or 70
+  local lines = vim.split(content, '\n')
+  local result = {}
+
+  -- Top border
+  table.insert(result, '┌─ ' .. title .. ' ' .. string.rep('─', width - #title - 4) .. '┐')
+
+  -- Content lines
+  for _, line in ipairs(lines) do
+    line = vim.trim(line)
+    if line ~= '' then
+      local padding = width - vim.fn.strdisplaywidth(line) - 2
+      if padding < 0 then padding = 0 end
+      table.insert(result, '│ ' .. line .. string.rep(' ', padding) .. '│')
+    end
+  end
+
+  -- Bottom border
+  table.insert(result, '└' .. string.rep('─', width) .. '┘')
+
+  return table.concat(result, '\n')
+end
+
+--- Extract and process Confluence macros
+---@param html string HTML content
+---@return string Processed HTML with macro replacements
+local function process_macros(html)
+  local content = html
+
+  -- Info macro
+  content = content:gsub('<ac:structured%-macro%s+ac:name="info"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
+    local text = macro_content:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+    text = vim.trim(text)
+    return '\n' .. create_box(text, 'ℹ INFO', 70) .. '\n'
+  end)
+
+  -- Warning macro
+  content = content:gsub('<ac:structured%-macro%s+ac:name="warning"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
+    local text = macro_content:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+    text = vim.trim(text)
+    return '\n' .. create_box(text, '⚠ WARNING', 70) .. '\n'
+  end)
+
+  -- Note macro
+  content = content:gsub('<ac:structured%-macro%s+ac:name="note"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
+    local text = macro_content:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+    text = vim.trim(text)
+    return '\n' .. create_box(text, '📝 NOTE', 70) .. '\n'
+  end)
+
+  -- Code macro
+  content = content:gsub('<ac:structured%-macro%s+ac:name="code"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
+    -- Extract language parameter
+    local lang = macro_content:match('<ac:parameter%s+ac:name="language">([^<]+)</ac:parameter>') or 'text'
+    -- Extract code content
+    local code = macro_content:match('<ac:plain%-text%-body>(.-)</ac:plain%-text%-body>')
+    if not code then
+      code = macro_content:gsub('<[^>]+>', '')
+    end
+    code = vim.trim(code)
+    return '\n' .. create_box(code, lang:upper(), 70) .. '\n'
+  end)
+
+  return content
+end
+
+--- Render table with box-drawing characters
+---@param table_html string HTML table content
+---@return string Formatted table
+local function render_table(table_html)
+  local rows = {}
+  local is_header = false
+
+  -- Extract rows
+  for row in table_html:gmatch('<tr[^>]*>(.-)</tr>') do
+    local cells = {}
+    local row_is_header = row:match('<th')
+
+    -- Extract cells (th or td)
+    for cell in row:gmatch('<t[hd][^>]*>(.-)</t[hd]>') do
+      local text = cell:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+      text = vim.trim(text)
+      table.insert(cells, text)
+    end
+
+    if #cells > 0 then
+      table.insert(rows, {cells = cells, is_header = row_is_header})
+    end
+  end
+
+  if #rows == 0 then
+    return table_html
+  end
+
+  -- Calculate column widths
+  local col_count = #rows[1].cells
+  local col_widths = {}
+  for i = 1, col_count do
+    col_widths[i] = 0
+  end
+
+  for _, row in ipairs(rows) do
+    for i, cell in ipairs(row.cells) do
+      col_widths[i] = math.max(col_widths[i], vim.fn.strdisplaywidth(cell))
+    end
+  end
+
+  -- Render table
+  local result = {}
+  local separator = '├' .. table.concat(vim.tbl_map(function(w) return string.rep('─', w + 2) end, col_widths), '┼') .. '┤'
+  local top = '┌' .. table.concat(vim.tbl_map(function(w) return string.rep('─', w + 2) end, col_widths), '┬') .. '┐'
+  local bottom = '└' .. table.concat(vim.tbl_map(function(w) return string.rep('─', w + 2) end, col_widths), '┴') .. '┘'
+
+  table.insert(result, top)
+
+  for idx, row in ipairs(rows) do
+    local line = '│'
+    for i, cell in ipairs(row.cells) do
+      local padding = col_widths[i] - vim.fn.strdisplaywidth(cell)
+      line = line .. ' ' .. cell .. string.rep(' ', padding) .. ' │'
+    end
+    table.insert(result, line)
+
+    -- Add separator after header
+    if row.is_header then
+      table.insert(result, separator)
+    end
+  end
+
+  table.insert(result, bottom)
+
+  return '\n' .. table.concat(result, '\n') .. '\n'
+end
+
 --- Process HTML content into plain text with formatting
 ---@param html string HTML content from Confluence
 ---@return string Processed plain text
@@ -24,6 +164,12 @@ function M.html_to_text(html)
   end
 
   local content = html
+
+  -- Process Confluence macros FIRST (before stripping HTML)
+  content = process_macros(content)
+
+  -- Process tables with box-drawing characters
+  content = content:gsub('<table[^>]*>(.-)</table>', render_table)
 
   -- Convert headings with visual markers
   content = content:gsub('<h1[^>]*>([^<]+)</h1>', '\n## %1\n')
@@ -49,11 +195,6 @@ function M.html_to_text(html)
   -- Simple approach: use bullets for all (proper numbering would need state tracking)
   content = content:gsub('<li[^>]*>', '  • ')
   content = content:gsub('</li>', '\n')
-
-  -- Table cells to tab-separated
-  content = content:gsub('</td>', '\t')
-  content = content:gsub('</th>', '\t')
-  content = content:gsub('</tr>', '\n')
 
   -- Paragraphs and divs
   content = content:gsub('</p>', '\n')
