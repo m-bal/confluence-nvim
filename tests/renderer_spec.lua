@@ -62,7 +62,7 @@ describe('confluence.renderer', function()
       local output = renderer.html_to_text(input)
 
       -- Should not contain any tags
-      assert.is_false(output:match('<[^>]+>'))
+      assert.is_nil(output:match('<[^>]+>'))
       -- Should contain the text content
       assert.has_match('Bold', output)
       assert.has_match('Italic', output)
@@ -94,7 +94,7 @@ describe('confluence.renderer', function()
       assert.has_match('Item 2', output)
 
       -- Should not contain HTML tags
-      assert.is_false(output:match('<[^>]+>'))
+      assert.is_nil(output:match('<[^>]+>'))
     end)
 
     it('should handle Confluence-specific HTML', function()
@@ -108,7 +108,7 @@ describe('confluence.renderer', function()
       local output = renderer.html_to_text(input)
 
       assert.has_match('This is an info box', output)
-      assert.is_false(output:match('<[^>]+>'))
+      assert.is_nil(output:match('<[^>]+>'))
     end)
   end)
 
