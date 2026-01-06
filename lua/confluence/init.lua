@@ -19,6 +19,12 @@ function M.setup(opts)
   vim.notify('Confluence plugin initialized', vim.log.levels.INFO)
 end
 
+--- Get statusline component for lualine/statusline integration
+---@return string Status text
+function M.statusline()
+  return require('confluence.statusline').get_statusline()
+end
+
 --- Open a Confluence page in a new buffer
 ---@param page_id string Page ID to open
 ---@param opts table|nil Options (skip_history: bool)
@@ -105,6 +111,16 @@ function M.open_page(page_id, opts)
       noremap = true,
       silent = true,
       desc = 'Go forward in Confluence navigation history'
+    })
+
+    -- Add breadcrumb keymap
+    vim.api.nvim_buf_set_keymap(buf, 'n', '<leader>cb', '', {
+      callback = function()
+        require('confluence.statusline').show_breadcrumbs()
+      end,
+      noremap = true,
+      silent = true,
+      desc = 'Show Confluence page breadcrumbs'
     })
 
     -- Open in current window
