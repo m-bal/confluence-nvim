@@ -215,6 +215,18 @@ function M.html_to_text(html)
   content = content:gsub('<tt[^>]*>(.-)</tt>', '`%1`')
   content = content:gsub('<kbd[^>]*>(.-)</kbd>', '`%1`')
 
+  -- Convert links - add indicator for Confluence page links
+  content = content:gsub('<a%s+href="([^"]+)"[^>]*>(.-)</a>', function(href, text)
+    -- Check if it's a Confluence page link
+    if href:match('/wiki/spaces/.*/pages/%d+') or href:match('/pages/%d+') then
+      -- Confluence internal link - add indicator
+      return text .. ' →'
+    else
+      -- External link - just preserve text
+      return text
+    end
+  end)
+
   -- Strip remaining HTML tags
   content = content:gsub('<[^>]+>', '')
 
@@ -237,7 +249,8 @@ end
 
 --- Render a Confluence page to buffer lines
 ---@param page table Page data from Confluence API
----@return table Array of lines for buffer
+---@return table lines Array of lines for buffer
+---@return table links Array of link metadata
 function M.render_page(page)
   local lines = {
     '# ' .. page.title,
@@ -249,9 +262,21 @@ function M.render_page(page)
     '',
   }
 
+  local links = {}
+
   -- Add content if available
   if page.body and page.body.storage and page.body.storage.value then
-    local content = M.html_to_text(page.body.storage.value)
+    -- Extract links first
+    local link_handler = require('confluence.links')
+    local processed_html, extracted_links = link_handler.extract_links(
+      page.body.storage.value,
+      '' -- base_url not needed for ID extraction
+    )
+
+    links = extracted_links
+
+    -- Convert to text with link markers
+    local content = M.html_to_text(processed_html)
 
     -- Split into lines and filter empty ones
     for line in content:gmatch('[^\r\n]+') do
@@ -264,7 +289,7 @@ function M.render_page(page)
     table.insert(lines, '[No content available]')
   end
 
-  return lines
+  return lines, links
 end
 
 return M

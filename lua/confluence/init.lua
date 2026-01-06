@@ -49,8 +49,8 @@ function M.open_page(page_id)
     -- Create new buffer
     local buf = vim.api.nvim_create_buf(false, true)
 
-    -- Render page content
-    local lines = renderer.render_page(page)
+    -- Render page content and extract links
+    local lines, links = renderer.render_page(page)
 
     -- Set buffer content
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -63,10 +63,24 @@ function M.open_page(page_id)
     -- Set buffer name
     vim.api.nvim_buf_set_name(buf, '[Confluence] ' .. page.title)
 
+    -- Store page metadata in buffer variables
+    vim.api.nvim_buf_set_var(buf, 'confluence_page_id', page.id)
+    vim.api.nvim_buf_set_var(buf, 'confluence_page_title', page.title)
+    if page.space then
+      vim.api.nvim_buf_set_var(buf, 'confluence_space_key', page.space.key or 'Unknown')
+    end
+
+    -- Set up link following if there are links
+    if links and #links > 0 then
+      local link_handler = require('confluence.links')
+      link_handler.setup_buffer_links(buf, links)
+      vim.notify(string.format('Page loaded: %s (%d links)', page.title, #links), vim.log.levels.INFO)
+    else
+      vim.notify('Page loaded: ' .. page.title, vim.log.levels.INFO)
+    end
+
     -- Open in current window
     vim.api.nvim_set_current_buf(buf)
-
-    vim.notify('Page loaded: ' .. page.title, vim.log.levels.INFO)
   end)
 end
 
