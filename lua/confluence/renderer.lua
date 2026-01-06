@@ -19,9 +19,11 @@ end
 ---@param content string Content to box
 ---@param title string Box title (e.g., "INFO", "WARNING", "CODE")
 ---@param width number Box width
+---@param preserve_indent boolean Whether to preserve leading whitespace (for code)
 ---@return string Boxed content
-local function create_box(content, title, width)
+local function create_box(content, title, width, preserve_indent)
   width = width or 70
+  preserve_indent = preserve_indent or false
   local lines = vim.split(content, '\n')
   local result = {}
 
@@ -30,11 +32,14 @@ local function create_box(content, title, width)
 
   -- Content lines
   for _, line in ipairs(lines) do
-    line = vim.trim(line)
-    if line ~= '' then
-      local padding = width - vim.fn.strdisplaywidth(line) - 2
+    -- For code blocks, preserve indentation; for others, trim
+    local display_line = preserve_indent and line or vim.trim(line)
+
+    -- Skip empty lines only if not preserving indentation
+    if preserve_indent or display_line ~= '' then
+      local padding = width - vim.fn.strdisplaywidth(display_line) - 2
       if padding < 0 then padding = 0 end
-      table.insert(result, '│ ' .. line .. string.rep(' ', padding) .. '│')
+      table.insert(result, '│ ' .. display_line .. string.rep(' ', padding) .. '│')
     end
   end
 
@@ -71,7 +76,7 @@ local function process_macros(html)
     return '\n' .. create_box(text, '📝 NOTE', 70) .. '\n'
   end)
 
-  -- Code macro
+  -- Code macro - preserve indentation
   content = content:gsub('<ac:structured%-macro%s+ac:name="code"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
     -- Extract language parameter
     local lang = macro_content:match('<ac:parameter%s+ac:name="language">([^<]+)</ac:parameter>') or 'text'
@@ -80,8 +85,9 @@ local function process_macros(html)
     if not code then
       code = macro_content:gsub('<[^>]+>', '')
     end
-    code = vim.trim(code)
-    return '\n' .. create_box(code, lang:upper(), 70) .. '\n'
+    -- Trim only trailing/leading newlines, not indentation
+    code = code:gsub('^%s*\n', ''):gsub('\n%s*$', '')
+    return '\n' .. create_box(code, lang:upper(), 70, true) .. '\n'  -- preserve_indent=true
   end)
 
   return content
@@ -203,6 +209,11 @@ function M.html_to_text(html)
   -- Line breaks
   content = content:gsub('<br[^>]*/>', '\n')
   content = content:gsub('<br[^>]*>', '\n')
+
+  -- Convert inline code tags to backticks BEFORE stripping HTML
+  content = content:gsub('<code[^>]*>(.-)</code>', '`%1`')
+  content = content:gsub('<tt[^>]*>(.-)</tt>', '`%1`')
+  content = content:gsub('<kbd[^>]*>(.-)</kbd>', '`%1`')
 
   -- Strip remaining HTML tags
   content = content:gsub('<[^>]+>', '')
