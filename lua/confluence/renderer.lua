@@ -57,21 +57,33 @@ local function process_macros(html)
 
   -- Info macro
   content = content:gsub('<ac:structured%-macro%s+ac:name="info"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
-    local text = macro_content:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+    local text = macro_content:gsub('<[^>]+>', '')
+    -- Only collapse whitespace if there are no tables (preserve table structure)
+    if not text:match('┌') and not text:match('│') then
+      text = text:gsub('%s+', ' ')
+    end
     text = vim.trim(text)
     return '\n' .. create_box(text, 'ℹ INFO', 70) .. '\n'
   end)
 
   -- Warning macro
   content = content:gsub('<ac:structured%-macro%s+ac:name="warning"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
-    local text = macro_content:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+    local text = macro_content:gsub('<[^>]+>', '')
+    -- Only collapse whitespace if there are no tables
+    if not text:match('┌') and not text:match('│') then
+      text = text:gsub('%s+', ' ')
+    end
     text = vim.trim(text)
     return '\n' .. create_box(text, '⚠ WARNING', 70) .. '\n'
   end)
 
   -- Note macro
   content = content:gsub('<ac:structured%-macro%s+ac:name="note"[^>]*>(.-)</ac:structured%-macro>', function(macro_content)
-    local text = macro_content:gsub('<[^>]+>', ''):gsub('%s+', ' ')
+    local text = macro_content:gsub('<[^>]+>', '')
+    -- Only collapse whitespace if there are no tables
+    if not text:match('┌') and not text:match('│') then
+      text = text:gsub('%s+', ' ')
+    end
     text = vim.trim(text)
     return '\n' .. create_box(text, '📝 NOTE', 70) .. '\n'
   end)
@@ -171,10 +183,12 @@ function M.html_to_text(html)
 
   local content = html
 
-  -- Process Confluence macros FIRST (before stripping HTML)
-  content = process_macros(content)
+  -- Convert inline code tags to backticks FIRST (before macro processing)
+  content = content:gsub('<code[^>]*>(.-)</code>', '`%1`')
+  content = content:gsub('<tt[^>]*>(.-)</tt>', '`%1`')
+  content = content:gsub('<kbd[^>]*>(.-)</kbd>', '`%1`')
 
-  -- Process tables with box-drawing characters
+  -- Process tables with box-drawing characters SECOND (before macros)
   content = content:gsub('<table[^>]*>(.-)</table>', render_table)
 
   -- Convert headings with visual markers
@@ -210,10 +224,8 @@ function M.html_to_text(html)
   content = content:gsub('<br[^>]*/>', '\n')
   content = content:gsub('<br[^>]*>', '\n')
 
-  -- Convert inline code tags to backticks BEFORE stripping HTML
-  content = content:gsub('<code[^>]*>(.-)</code>', '`%1`')
-  content = content:gsub('<tt[^>]*>(.-)</tt>', '`%1`')
-  content = content:gsub('<kbd[^>]*>(.-)</kbd>', '`%1`')
+  -- Process Confluence macros AFTER tables and inline code are converted
+  content = process_macros(content)
 
   -- Convert links - add indicator for Confluence page links
   content = content:gsub('<a%s+href="([^"]+)"[^>]*>(.-)</a>', function(href, text)
