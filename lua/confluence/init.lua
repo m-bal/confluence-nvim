@@ -27,6 +27,17 @@ function M.open_page(page_id)
       return
     end
 
+    -- Debug: check what we received
+    if not page then
+      vim.notify('ERROR: Page data is nil', vim.log.levels.ERROR)
+      return
+    end
+
+    if not page.title then
+      vim.notify('ERROR: Page has no title', vim.log.levels.ERROR)
+      return
+    end
+
     -- Create new buffer
     local buf = vim.api.nvim_create_buf(false, true)
 
@@ -44,11 +55,35 @@ function M.open_page(page_id)
     -- Add content (simplified - just extract text from HTML)
     if page.body and page.body.storage and page.body.storage.value then
       local content = page.body.storage.value
+      vim.notify('DEBUG: Got content, length: ' .. #content, vim.log.levels.INFO)
+
       -- Simple HTML tag stripping for MVP
-      content = content:gsub('<[^>]+>', ' '):gsub('%s+', ' ')
+      -- First, replace common tags with newlines for better formatting
+      content = content:gsub('<br[^>]*>', '\n')
+      content = content:gsub('</p>', '\n\n')
+      content = content:gsub('</div>', '\n')
+      content = content:gsub('</h[1-6]>', '\n\n')
+
+      -- Strip remaining HTML tags
+      content = content:gsub('<[^>]+>', '')
+
+      -- Decode common HTML entities
+      content = content:gsub('&nbsp;', ' ')
+      content = content:gsub('&amp;', '&')
+      content = content:gsub('&lt;', '<')
+      content = content:gsub('&gt;', '>')
+      content = content:gsub('&quot;', '"')
+
+      -- Split into lines and add to buffer
       for line in content:gmatch('[^\r\n]+') do
-        table.insert(lines, line)
+        local trimmed = vim.trim(line)
+        if trimmed ~= '' then
+          table.insert(lines, trimmed)
+        end
       end
+    else
+      table.insert(lines, '[No content available]')
+      vim.notify('WARNING: Page has no body content', vim.log.levels.WARN)
     end
 
     -- Set buffer content
@@ -64,6 +99,8 @@ function M.open_page(page_id)
 
     -- Open in current window
     vim.api.nvim_set_current_buf(buf)
+
+    vim.notify('Page loaded: ' .. page.title, vim.log.levels.INFO)
   end)
 end
 
