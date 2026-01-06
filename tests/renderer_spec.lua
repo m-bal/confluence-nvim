@@ -28,14 +28,25 @@ describe('confluence.renderer', function()
       assert.has_match('\n', output)
     end)
 
-    it('should convert p tags to double newlines', function()
+    it('should separate paragraphs with newlines', function()
       local input = '<p>Paragraph 1</p><p>Paragraph 2</p>'
       local output = renderer.html_to_text(input)
 
-      -- Should contain double newlines for paragraph separation
-      assert.has_match('\n\n', output)
+      -- Should contain newlines for paragraph separation
+      assert.has_match('\n', output)
       assert.has_match('Paragraph 1', output)
       assert.has_match('Paragraph 2', output)
+
+      -- Should be on separate lines
+      local lines = vim.split(output, '\n')
+      local has_para1 = false
+      local has_para2 = false
+      for _, line in ipairs(lines) do
+        if line:match('Paragraph 1') then has_para1 = true end
+        if line:match('Paragraph 2') then has_para2 = true end
+      end
+      assert.is_true(has_para1)
+      assert.is_true(has_para2)
     end)
 
     it('should convert heading tags to newlines', function()

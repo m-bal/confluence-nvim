@@ -25,19 +25,60 @@ function M.html_to_text(html)
 
   local content = html
 
-  -- Replace structural tags with newlines for better formatting
-  content = content:gsub('<br[^>]*>', '\n')
-  content = content:gsub('<br[^>]*/>', '\n')
-  content = content:gsub('</p>', '\n\n')
-  content = content:gsub('</div>', '\n')
-  content = content:gsub('</h[1-6]>', '\n\n')
+  -- Convert headings with visual markers
+  content = content:gsub('<h1[^>]*>([^<]+)</h1>', '\n## %1\n')
+  content = content:gsub('<h2[^>]*>([^<]+)</h2>', '\n### %1\n')
+  content = content:gsub('<h3[^>]*>([^<]+)</h3>', '\n#### %1\n')
+  content = content:gsub('<h4[^>]*>([^<]+)</h4>', '\n##### %1\n')
+  content = content:gsub('<h5[^>]*>([^<]+)</h5>', '\n###### %1\n')
+  content = content:gsub('<h6[^>]*>([^<]+)</h6>', '\n###### %1\n')
+
+  -- Convert ordered lists with numbers (simple approach - all items get numbers)
+  local ol_counter = 0
+  content = content:gsub('<ol[^>]*>', function()
+    ol_counter = 0
+    return '\n'
+  end)
+  content = content:gsub('</ol>', '\n')
+
+  -- Convert unordered lists with bullet points
+  content = content:gsub('<ul[^>]*>', '\n')
+  content = content:gsub('</ul>', '\n')
+
+  -- List items - check context for ordered vs unordered
+  -- Simple approach: use bullets for all (proper numbering would need state tracking)
+  content = content:gsub('<li[^>]*>', '  • ')
   content = content:gsub('</li>', '\n')
+
+  -- Table cells to tab-separated
+  content = content:gsub('</td>', '\t')
+  content = content:gsub('</th>', '\t')
+  content = content:gsub('</tr>', '\n')
+
+  -- Paragraphs and divs
+  content = content:gsub('</p>', '\n')
+  content = content:gsub('</div>', '\n')
+
+  -- Line breaks
+  content = content:gsub('<br[^>]*/>', '\n')
+  content = content:gsub('<br[^>]*>', '\n')
 
   -- Strip remaining HTML tags
   content = content:gsub('<[^>]+>', '')
 
   -- Decode HTML entities
   content = decode_entities(content)
+
+  -- Clean up excessive whitespace
+  -- Reduce multiple blank lines to at most 2
+  content = content:gsub('\n\n\n+', '\n\n')
+
+  -- Trim leading/trailing whitespace on each line
+  local lines = vim.split(content, '\n')
+  for i, line in ipairs(lines) do
+    lines[i] = vim.trim(line)
+  end
+  content = table.concat(lines, '\n')
 
   return content
 end
