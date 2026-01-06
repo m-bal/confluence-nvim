@@ -21,7 +21,10 @@ end
 
 --- Open a Confluence page in a new buffer
 ---@param page_id string Page ID to open
-function M.open_page(page_id)
+---@param opts table|nil Options (skip_history: bool)
+function M.open_page(page_id, opts)
+  opts = opts or {}
+
   api.fetch_page(page_id, function(err, page)
     if err then
       vim.notify('Failed to fetch page: ' .. err, vim.log.levels.ERROR)
@@ -78,6 +81,31 @@ function M.open_page(page_id)
     else
       vim.notify('Page loaded: ' .. page.title, vim.log.levels.INFO)
     end
+
+    -- Add to history (unless we're navigating back/forward)
+    if not opts.skip_history then
+      local history = require('confluence.history')
+      history.push(page.id, page.title)
+    end
+
+    -- Set up navigation keymaps
+    vim.api.nvim_buf_set_keymap(buf, 'n', '<C-t>', '', {
+      callback = function()
+        require('confluence.history').go_back()
+      end,
+      noremap = true,
+      silent = true,
+      desc = 'Go back in Confluence navigation history'
+    })
+
+    vim.api.nvim_buf_set_keymap(buf, 'n', '<C-i>', '', {
+      callback = function()
+        require('confluence.history').go_forward()
+      end,
+      noremap = true,
+      silent = true,
+      desc = 'Go forward in Confluence navigation history'
+    })
 
     -- Open in current window
     vim.api.nvim_set_current_buf(buf)
