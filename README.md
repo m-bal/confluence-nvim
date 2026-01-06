@@ -7,7 +7,11 @@ A Neovim plugin for reading Confluence documentation with native rendering, buil
 - 🔍 **Browse Confluence spaces and pages** via Telescope integration
 - 🔐 **Secure by design** - HTTPS-only, input validation, injection prevention
 - ⚡ **Async API calls** - Non-blocking with proper error handling
-- 📝 **Read pages in Neovim** - Open Confluence pages in dedicated buffers
+- 📝 **Rich content rendering** - Beautiful bordered boxes, tables, code blocks with syntax
+- 🔗 **Link following** - Navigate between pages with `gx` or `<C-]>` keymaps
+- ⏮️ **Navigation history** - Go back/forward through visited pages (Vim tag-stack style)
+- 🗺️ **Breadcrumbs** - View page hierarchy and space information
+- 📊 **Statusline integration** - Show current page in lualine/statusline
 - 🎯 **Search functionality** - Full-text search across your Confluence instance
 - 🔒 **Security-hardened** - 10 critical vulnerabilities fixed via adversarial review
 
@@ -60,6 +64,32 @@ In Telescope pickers:
 - `<CR>` - Open selected page/space
 - `<C-x>` - Open page in horizontal split
 - `<C-v>` - Open page in vertical split
+
+In Confluence page buffers:
+
+- `gx` or `<C-]>` - Follow link under cursor to another Confluence page
+- `<C-t>` - Go back in navigation history
+- `<C-i>` - Go forward in navigation history
+- `<leader>cb` - Show breadcrumbs (space > page hierarchy)
+
+### Statusline Integration
+
+To show the current Confluence page in your statusline, add this to your lualine config:
+
+```lua
+require('lualine').setup({
+  sections = {
+    lualine_c = {
+      'filename',
+      function()
+        return require('confluence').statusline()
+      end,
+    },
+  },
+})
+```
+
+This will display: `🏢 [SPACE] Page Title` when viewing Confluence pages.
 
 ## Security
 
