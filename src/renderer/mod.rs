@@ -15,6 +15,10 @@ pub use highlights::{ConfluenceHighlights, HighlightGroup};
 
 /// Default box width for rendering
 const DEFAULT_BOX_WIDTH: usize = 70;
+/// Minimum box width
+const MIN_BOX_WIDTH: usize = 40;
+/// Maximum box width (screen width limit)
+const MAX_BOX_WIDTH: usize = 120;
 
 #[derive(Error, Debug)]
 pub enum RenderError {
@@ -83,8 +87,14 @@ pub struct Renderer {
     /// Maximum image width in characters
     pub max_image_width: u32,
 
-    /// Box width for panels and code blocks
+    /// Box width for panels and code blocks (0 = dynamic)
     pub box_width: usize,
+
+    /// Maximum box width (for dynamic sizing)
+    pub max_box_width: usize,
+
+    /// Use dynamic box sizing based on content
+    pub dynamic_box_width: bool,
 }
 
 impl Default for Renderer {
@@ -94,6 +104,8 @@ impl Default for Renderer {
             enable_images: true,
             max_image_width: 80,
             box_width: DEFAULT_BOX_WIDTH,
+            max_box_width: MAX_BOX_WIDTH,
+            dynamic_box_width: true,
         }
     }
 }
@@ -339,15 +351,37 @@ impl Renderer {
 
     /// Render a macro panel with proper box drawing
     fn render_panel(&self, panel: &MacroPanel, ctx: &mut RenderContext) {
-        let width = ctx.box_width;
         let icon = panel.icon();
         let label = panel.label();
-
-        // Calculate header width using character count (not bytes) for Unicode support
-        // Header format: ┌─ {icon} {label} {dashes}┐
-        // Total chars: 1 + 1 + 1 + icon + 1 + label + 1 + dashes + 1 = width + 2
         let icon_chars = icon.chars().count();
         let label_chars = label.chars().count();
+
+        // Calculate dynamic width based on content if enabled
+        let width = if self.dynamic_box_width {
+            // Find the longest content line
+            let max_content_width = panel.content.lines()
+                .map(|l| l.trim().chars().count())
+                .max()
+                .unwrap_or(0);
+
+            // Header needs: icon + label + 6 chars for "┌─  ┐" formatting
+            let header_min = icon_chars + label_chars + 6;
+
+            // Content needs: content + 4 chars for "│  │" borders
+            let content_min = max_content_width + 4;
+
+            // Use the larger of header or content requirements
+            let needed = header_min.max(content_min);
+
+            // Clamp between min and max
+            needed.clamp(MIN_BOX_WIDTH, self.max_box_width)
+        } else {
+            ctx.box_width
+        };
+
+        // Calculate header dashes
+        // Header format: ┌─ {icon} {label} {dashes}┐
+        // Total chars: 1 + 1 + 1 + icon + 1 + label + 1 + dashes + 1 = width + 2
         let dashes_needed = width.saturating_sub(4 + icon_chars + label_chars);
 
         ctx.push_line(format!(
@@ -357,18 +391,15 @@ impl Renderer {
             "─".repeat(dashes_needed)
         ));
 
-        // Wrap content lines to fit box
+        // Render content lines (no wrapping in dynamic mode - content fits)
         for line in panel.content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 ctx.push_line(format!("│{}│", " ".repeat(width)));
             } else {
-                // Word wrap long lines
-                for wrapped in self.wrap_text(trimmed, width - 2) {
-                    let content_chars = wrapped.chars().count();
-                    let padding = width.saturating_sub(content_chars + 2);
-                    ctx.push_line(format!("│ {}{} │", wrapped, " ".repeat(padding)));
-                }
+                let content_chars = trimmed.chars().count();
+                let padding = width.saturating_sub(content_chars + 2);
+                ctx.push_line(format!("│ {}{} │", trimmed, " ".repeat(padding)));
             }
         }
 
@@ -377,14 +408,8 @@ impl Renderer {
 
     /// Render a code block with proper box drawing
     fn render_code_block(&self, block: &CodeBlock, ctx: &mut RenderContext) {
-        let width = ctx.box_width;
         let lang_upper = block.language.to_uppercase();
-
-        // Header format: ┌─ {LANG} {dashes}┐
-        // Total chars: 1 + 1 + 1 + lang + 1 + dashes + 1 = width + 2
         let lang_chars = lang_upper.chars().count();
-        let dashes_needed = width.saturating_sub(3 + lang_chars);
-        ctx.push_line(format!("┌─ {} {}┐", lang_upper, "─".repeat(dashes_needed)));
 
         // Code lines with optional line numbers
         let code_lines: Vec<&str> = block.code.lines().collect();
@@ -394,6 +419,42 @@ impl Renderer {
             0
         };
 
+        // Calculate dynamic width based on content if enabled
+        let width = if self.dynamic_box_width {
+            // Find the longest code line (with line number prefix if enabled)
+            let max_code_width = code_lines.iter()
+                .map(|l| {
+                    if block.line_numbers {
+                        // Line number + " │ " + code
+                        line_num_width + 3 + l.chars().count()
+                    } else {
+                        // " " + code
+                        1 + l.chars().count()
+                    }
+                })
+                .max()
+                .unwrap_or(0);
+
+            // Header needs: lang + 5 chars for "┌─  ┐" formatting
+            let header_min = lang_chars + 5;
+
+            // Content needs: content + 3 chars for "│ │" borders
+            let content_min = max_code_width + 3;
+
+            // Use the larger of header or content requirements
+            let needed = header_min.max(content_min);
+
+            // Clamp between min and max
+            needed.clamp(MIN_BOX_WIDTH, self.max_box_width)
+        } else {
+            ctx.box_width
+        };
+
+        // Header format: ┌─ {LANG} {dashes}┐
+        // Total chars: 1 + 1 + 1 + lang + 1 + dashes + 1 = width + 2
+        let dashes_needed = width.saturating_sub(3 + lang_chars);
+        ctx.push_line(format!("┌─ {} {}┐", lang_upper, "─".repeat(dashes_needed)));
+
         for (idx, line) in code_lines.iter().enumerate() {
             let content = if block.line_numbers {
                 format!("{:>width$} │ {}", idx + 1, line, width = line_num_width)
@@ -401,9 +462,9 @@ impl Renderer {
                 format!(" {}", line)
             };
 
-            // Truncate if too long (use char count)
+            // In dynamic mode, content should fit; in fixed mode, truncate if needed
             let content_chars = content.chars().count();
-            let display_content = if content_chars > width - 2 {
+            let display_content = if !self.dynamic_box_width && content_chars > width - 2 {
                 let truncated: String = content.chars().take(width - 3).collect();
                 format!("{}…", truncated)
             } else {
@@ -411,7 +472,10 @@ impl Renderer {
             };
 
             let display_chars = display_content.chars().count();
-            let padding = width.saturating_sub(display_chars + 2);
+            // Total line: │ + content + padding + space + │ = width + 2
+            // So: 1 + content + padding + 1 + 1 = width + 2
+            // padding = width - content - 1
+            let padding = width.saturating_sub(display_chars + 1);
             ctx.push_line(format!("│{}{} │", display_content, " ".repeat(padding)));
         }
 
@@ -2150,12 +2214,12 @@ Short</ac:rich-text-body>
     fn test_panel_content_right_padded() {
         let renderer = Renderer::new();
         let html = r#"<ac:structured-macro ac:name="info">
-            <ac:rich-text-body>X</ac:rich-text-body>
+            <ac:rich-text-body>This is important information that users need to read carefully.</ac:rich-text-body>
         </ac:structured-macro>"#;
         let result = renderer.render("123", "Padded", html).unwrap();
 
         let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
-        let content = result.lines.iter().find(|l| l.contains("X") && l.starts_with("│")).unwrap();
+        let content = result.lines.iter().find(|l| l.contains("important") && l.starts_with("│")).unwrap();
         let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
 
         let header_w = header.chars().count();
@@ -2168,5 +2232,110 @@ Short</ac:rich-text-body>
 
         assert_eq!(header_w, content_w, "Content not padded to header width");
         assert_eq!(header_w, footer_w, "Footer not same width as header");
+    }
+
+    #[test]
+    fn test_panel_full_width_content() {
+        let renderer = Renderer::new();
+        // Content that nearly fills the box width
+        let html = r#"<ac:structured-macro ac:name="warning">
+            <ac:rich-text-body>WARNING: This configuration change will affect all users in production!</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "FullWidth", html).unwrap();
+
+        println!("\n=== Full Width Panel Test ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+        println!("=============================\n");
+
+        // Verify all box lines have same width
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+
+        let expected_width = box_lines[0].chars().count();
+        for line in &box_lines {
+            assert_eq!(
+                line.chars().count(),
+                expected_width,
+                "Width mismatch in line: '{}'",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_code_block_full_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">python</ac:parameter>
+            <ac:plain-text-body>def calculate_total_price(items, tax_rate=0.08, discount=0.0):
+    """Calculate the total price with tax and optional discount."""
+    subtotal = sum(item.price * item.quantity for item in items)
+    discount_amount = subtotal * discount
+    taxable = subtotal - discount_amount
+    return taxable * (1 + tax_rate)</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "FullCode", html).unwrap();
+
+        println!("\n=== Full Code Block Test ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+        println!("============================\n");
+
+        // Verify all box lines have same width
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+
+        let expected_width = box_lines[0].chars().count();
+        for (idx, line) in box_lines.iter().enumerate() {
+            assert_eq!(
+                line.chars().count(),
+                expected_width,
+                "Line {} width mismatch: '{}'",
+                idx, line
+            );
+        }
+    }
+
+    #[test]
+    fn test_panel_multiline_full_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="note">
+            <ac:rich-text-body>Before deploying to production, ensure you have:
+1. Run all unit tests and integration tests
+2. Updated the changelog with your changes
+3. Got approval from at least two reviewers</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "MultiNote", html).unwrap();
+
+        println!("\n=== Multiline Panel Test ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+        println!("============================\n");
+
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+
+        let expected_width = box_lines[0].chars().count();
+        for line in &box_lines {
+            assert_eq!(
+                line.chars().count(),
+                expected_width,
+                "Multiline panel width mismatch: '{}'",
+                line
+            );
+        }
     }
 }
