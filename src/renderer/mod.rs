@@ -343,14 +343,18 @@ impl Renderer {
         let icon = panel.icon();
         let label = panel.label();
 
-        // Calculate header width
-        let header_text = format!("{} {}", icon, label);
-        let remaining = width.saturating_sub(header_text.len() + 4);
+        // Calculate header width using character count (not bytes) for Unicode support
+        // Header format: ┌─ {icon} {label} {dashes}┐
+        // Total chars: 1 + 1 + 1 + icon + 1 + label + 1 + dashes + 1 = width + 2
+        let icon_chars = icon.chars().count();
+        let label_chars = label.chars().count();
+        let dashes_needed = width.saturating_sub(4 + icon_chars + label_chars);
 
         ctx.push_line(format!(
-            "┌─ {} {}┐",
-            header_text,
-            "─".repeat(remaining)
+            "┌─ {} {} {}┐",
+            icon,
+            label,
+            "─".repeat(dashes_needed)
         ));
 
         // Wrap content lines to fit box
@@ -361,8 +365,9 @@ impl Renderer {
             } else {
                 // Word wrap long lines
                 for wrapped in self.wrap_text(trimmed, width - 2) {
-                    let padding = width - wrapped.len() - 2;
-                    ctx.push_line(format!("│ {}{} │", wrapped, " ".repeat(padding.max(0))));
+                    let content_chars = wrapped.chars().count();
+                    let padding = width.saturating_sub(content_chars + 2);
+                    ctx.push_line(format!("│ {}{} │", wrapped, " ".repeat(padding)));
                 }
             }
         }
@@ -375,10 +380,11 @@ impl Renderer {
         let width = ctx.box_width;
         let lang_upper = block.language.to_uppercase();
 
-        // Header
-        let header_text = format!("─ {} ", lang_upper);
-        let remaining = width.saturating_sub(header_text.len() + 1);
-        ctx.push_line(format!("┌{}{}┐", header_text, "─".repeat(remaining)));
+        // Header format: ┌─ {LANG} {dashes}┐
+        // Total chars: 1 + 1 + 1 + lang + 1 + dashes + 1 = width + 2
+        let lang_chars = lang_upper.chars().count();
+        let dashes_needed = width.saturating_sub(3 + lang_chars);
+        ctx.push_line(format!("┌─ {} {}┐", lang_upper, "─".repeat(dashes_needed)));
 
         // Code lines with optional line numbers
         let code_lines: Vec<&str> = block.code.lines().collect();
@@ -395,15 +401,18 @@ impl Renderer {
                 format!(" {}", line)
             };
 
-            // Truncate if too long
-            let display_content = if content.len() > width - 2 {
-                format!("{}…", &content[..width - 3])
+            // Truncate if too long (use char count)
+            let content_chars = content.chars().count();
+            let display_content = if content_chars > width - 2 {
+                let truncated: String = content.chars().take(width - 3).collect();
+                format!("{}…", truncated)
             } else {
                 content
             };
 
-            let padding = width - display_content.len() - 2;
-            ctx.push_line(format!("│{}{} │", display_content, " ".repeat(padding.max(0))));
+            let display_chars = display_content.chars().count();
+            let padding = width.saturating_sub(display_chars + 2);
+            ctx.push_line(format!("│{}{} │", display_content, " ".repeat(padding)));
         }
 
         // Footer
@@ -1881,5 +1890,283 @@ line3</ac:plain-text-body>
             "Should not have more than 2 consecutive blank lines, found {}",
             max_consecutive
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // LONG TEXT BOX RENDERING TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_code_block_header_footer_width_match() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">rust</ac:parameter>
+            <ac:plain-text-body>let x = 1;</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Code", html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+
+        let header_width = header.chars().count();
+        let footer_width = footer.chars().count();
+
+        assert_eq!(
+            header_width, footer_width,
+            "Header width ({}) != footer width ({})\nHeader: {}\nFooter: {}",
+            header_width, footer_width, header, footer
+        );
+    }
+
+    #[test]
+    fn test_panel_header_footer_width_match() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Short content</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Panel", html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+
+        let header_width = header.chars().count();
+        let footer_width = footer.chars().count();
+
+        assert_eq!(
+            header_width, footer_width,
+            "Panel header width ({}) != footer width ({})\nHeader: {}\nFooter: {}",
+            header_width, footer_width, header, footer
+        );
+    }
+
+    #[test]
+    fn test_code_block_long_content_line() {
+        let renderer = Renderer::new();
+        let long_line = "x".repeat(100);
+        let html = format!(
+            r#"<ac:structured-macro ac:name="code">
+                <ac:parameter ac:name="language">text</ac:parameter>
+                <ac:plain-text-body>{}</ac:plain-text-body>
+            </ac:structured-macro>"#,
+            long_line
+        );
+        let result = renderer.render("123", "Long", &html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+        let content_line = result.lines.iter().find(|l| l.contains("xxxx")).unwrap();
+
+        let header_width = header.chars().count();
+        let footer_width = footer.chars().count();
+        let content_width = content_line.chars().count();
+
+        // All lines in the box should have the same width
+        assert_eq!(
+            header_width, footer_width,
+            "Header/footer width mismatch with long content"
+        );
+
+        // Content should not exceed box width (should wrap or be contained)
+        assert!(
+            content_width <= header_width + 5, // small tolerance
+            "Content line ({} chars) exceeds box width ({} chars)\nContent: {}",
+            content_width, header_width, content_line
+        );
+    }
+
+    #[test]
+    fn test_panel_long_content_line() {
+        let renderer = Renderer::new();
+        let long_text = "This is a very long sentence that should be properly contained within the panel box boundaries without breaking the visual structure of the rendered output.";
+        let html = format!(
+            r#"<ac:structured-macro ac:name="warning">
+                <ac:rich-text-body>{}</ac:rich-text-body>
+            </ac:structured-macro>"#,
+            long_text
+        );
+        let result = renderer.render("123", "LongPanel", &html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+
+        let header_width = header.chars().count();
+        let footer_width = footer.chars().count();
+
+        assert_eq!(
+            header_width, footer_width,
+            "Panel header/footer mismatch with long content\nHeader: {}\nFooter: {}",
+            header, footer
+        );
+    }
+
+    #[test]
+    fn test_code_block_multiline_long_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">python</ac:parameter>
+            <ac:plain-text-body>def very_long_function_name_that_exceeds_normal_width(parameter_one, parameter_two, parameter_three):
+    result = parameter_one + parameter_two + parameter_three
+    return result * 2
+
+# This is a comment that is also quite long and might cause issues with box rendering
+print("Hello, World! This is a test of long string content in code blocks.")</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "MultiLong", html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+
+        // Print actual output for debugging
+        println!("=== Code Block Output ===");
+        for line in &result.lines {
+            println!("{}", line);
+        }
+        println!("=========================");
+
+        assert_eq!(
+            header.chars().count(),
+            footer.chars().count(),
+            "Multiline code block header/footer width mismatch"
+        );
+    }
+
+    #[test]
+    fn test_content_lines_have_right_border() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Test content</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "RightBorder", html).unwrap();
+
+        // Find content lines (not header/footer)
+        let content_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("│") && !l.contains("─"))
+            .collect();
+
+        for line in &content_lines {
+            assert!(
+                line.ends_with("│"),
+                "Content line missing right border: '{}'",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_box_lines_same_width() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="note">
+            <ac:rich-text-body>Line one
+Line two is a bit longer
+Short</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "SameWidth", html).unwrap();
+
+        // Get all lines that are part of the box
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+
+        if box_lines.len() >= 2 {
+            let expected_width = box_lines[0].chars().count();
+            for (idx, line) in box_lines.iter().enumerate() {
+                let width = line.chars().count();
+                assert_eq!(
+                    width, expected_width,
+                    "Box line {} has width {}, expected {}\nLine: '{}'",
+                    idx, width, expected_width, line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_table_long_cell_content() {
+        let renderer = Renderer::new();
+        let html = r#"<table>
+            <tr><th>Short</th><th>Description</th></tr>
+            <tr><td>A</td><td>This is a very long description that should be handled properly by the table renderer</td></tr>
+            <tr><td>B</td><td>Short</td></tr>
+        </table>"#;
+        let result = renderer.render("123", "LongTable", html).unwrap();
+
+        // All table border lines should have same width
+        let border_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("├") || l.starts_with("└"))
+            .collect();
+
+        if border_lines.len() >= 2 {
+            let expected_width = border_lines[0].chars().count();
+            for line in &border_lines {
+                assert_eq!(
+                    line.chars().count(),
+                    expected_width,
+                    "Table border width inconsistent"
+                );
+            }
+        }
+
+        // All data rows should have same width
+        let data_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("│") && !l.contains("─"))
+            .collect();
+
+        if data_lines.len() >= 2 {
+            let expected_width = data_lines[0].chars().count();
+            for line in &data_lines {
+                assert_eq!(
+                    line.chars().count(),
+                    expected_width,
+                    "Table row width inconsistent: '{}'",
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_code_block_with_long_language_name() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">javascript</ac:parameter>
+            <ac:plain-text-body>const x = 1;</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "JSCode", html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+
+        println!("Header: {}", header);
+        println!("Footer: {}", footer);
+
+        assert_eq!(
+            header.chars().count(),
+            footer.chars().count(),
+            "Header/footer mismatch with 'javascript' language name"
+        );
+    }
+
+    #[test]
+    fn test_panel_content_right_padded() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>X</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Padded", html).unwrap();
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let content = result.lines.iter().find(|l| l.contains("X") && l.starts_with("│")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+
+        let header_w = header.chars().count();
+        let content_w = content.chars().count();
+        let footer_w = footer.chars().count();
+
+        println!("Header:  '{}' ({})", header, header_w);
+        println!("Content: '{}' ({})", content, content_w);
+        println!("Footer:  '{}' ({})", footer, footer_w);
+
+        assert_eq!(header_w, content_w, "Content not padded to header width");
+        assert_eq!(header_w, footer_w, "Footer not same width as header");
     }
 }
