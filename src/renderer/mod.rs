@@ -1254,4 +1254,632 @@ mod tests {
         let result = renderer.render("123", "Malformed", html);
         assert!(result.is_ok());
     }
+
+    // =========================================================================
+    // UI RENDERING TESTS - Exact Visual Output Verification
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // TABLE VISUAL TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_table_exact_box_drawing() {
+        let renderer = Renderer::new();
+        let html = r#"<table>
+            <tr><th>A</th><th>B</th></tr>
+            <tr><td>1</td><td>2</td></tr>
+        </table>"#;
+        let result = renderer.render("123", "Table", html).unwrap();
+        let output = result.lines.join("\n");
+
+        // Verify exact box drawing characters
+        assert!(output.contains("┌"), "Missing top-left corner");
+        assert!(output.contains("┐"), "Missing top-right corner");
+        assert!(output.contains("└"), "Missing bottom-left corner");
+        assert!(output.contains("┘"), "Missing bottom-right corner");
+        assert!(output.contains("┬"), "Missing top T-junction");
+        assert!(output.contains("┴"), "Missing bottom T-junction");
+        assert!(output.contains("┼"), "Missing cross junction");
+        assert!(output.contains("├"), "Missing left T-junction");
+        assert!(output.contains("┤"), "Missing right T-junction");
+        assert!(output.contains("│"), "Missing vertical bars");
+        assert!(output.contains("─"), "Missing horizontal bars");
+    }
+
+    #[test]
+    fn test_table_column_alignment() {
+        let renderer = Renderer::new();
+        let html = r#"<table>
+            <tr><th>Short</th><th>LongerHeader</th></tr>
+            <tr><td>X</td><td>Y</td></tr>
+            <tr><td>VeryLongCell</td><td>Z</td></tr>
+        </table>"#;
+        let result = renderer.render("123", "Align", html).unwrap();
+
+        // Find lines with vertical bars
+        let data_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("│") && !l.contains("─"))
+            .collect();
+
+        // All data lines should have same length (aligned columns)
+        if data_lines.len() >= 2 {
+            let first_len = data_lines[0].chars().count();
+            for line in &data_lines {
+                assert_eq!(
+                    line.chars().count(),
+                    first_len,
+                    "Column alignment mismatch: {:?}",
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_table_header_separator() {
+        let renderer = Renderer::new();
+        let html = r#"<table>
+            <tr><th>H1</th><th>H2</th></tr>
+            <tr><td>D1</td><td>D2</td></tr>
+        </table>"#;
+        let result = renderer.render("123", "Sep", html).unwrap();
+
+        // Header separator must be between header and data
+        let lines: Vec<_> = result.lines.iter()
+            .filter(|l| !l.is_empty())
+            .collect();
+
+        let separator_idx = lines.iter()
+            .position(|l| l.contains("├") && l.contains("┼") && l.contains("┤"));
+        assert!(separator_idx.is_some(), "Missing header separator");
+
+        // Find header row (contains H1, H2)
+        let header_idx = lines.iter().position(|l| l.contains("H1"));
+        // Find data row (contains D1, D2)
+        let data_idx = lines.iter().position(|l| l.contains("D1"));
+
+        if let (Some(h), Some(s), Some(d)) = (header_idx, separator_idx, data_idx) {
+            assert!(h < s, "Header should come before separator");
+            assert!(s < d, "Separator should come before data");
+        }
+    }
+
+    #[test]
+    fn test_table_cell_padding() {
+        let renderer = Renderer::new();
+        let html = r#"<table>
+            <tr><th>Name</th></tr>
+            <tr><td>Test</td></tr>
+        </table>"#;
+        let result = renderer.render("123", "Pad", html).unwrap();
+
+        // Cells should have space padding: "│ content │"
+        let content_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.contains("Name") || l.contains("Test"))
+            .collect();
+
+        for line in content_lines {
+            assert!(
+                line.contains("│ "),
+                "Missing left padding in: {}",
+                line
+            );
+            assert!(
+                line.ends_with(" │"),
+                "Missing right padding in: {}",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_table_multi_column_borders() {
+        let renderer = Renderer::new();
+        let html = r#"<table>
+            <tr><th>C1</th><th>C2</th><th>C3</th><th>C4</th></tr>
+            <tr><td>A</td><td>B</td><td>C</td><td>D</td></tr>
+        </table>"#;
+        let result = renderer.render("123", "MultiCol", html).unwrap();
+
+        // Count column separators in data rows
+        let data_line = result.lines.iter()
+            .find(|l| l.contains("│A") || l.contains("│ A"));
+
+        if let Some(line) = data_line {
+            let bar_count = line.matches('│').count();
+            // 4 columns need 5 vertical bars (left edge + 3 separators + right edge)
+            assert_eq!(bar_count, 5, "Wrong number of column separators in: {}", line);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // CODE BLOCK VISUAL TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_code_block_header_format() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">python</ac:parameter>
+            <ac:plain-text-body>print("hello")</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Code", html).unwrap();
+
+        // Find header line
+        let header = result.lines.iter()
+            .find(|l| l.contains("PYTHON"));
+
+        assert!(header.is_some(), "Missing language header");
+        let h = header.unwrap();
+        assert!(h.starts_with("┌─"), "Header should start with ┌─");
+        assert!(h.contains("PYTHON"), "Language should be uppercase");
+    }
+
+    #[test]
+    fn test_code_block_content_lines() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">js</ac:parameter>
+            <ac:plain-text-body>line1
+line2
+line3</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Code", html).unwrap();
+
+        // All content lines should start with "│"
+        let content_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.contains("line1") || l.contains("line2") || l.contains("line3"))
+            .collect();
+
+        assert_eq!(content_lines.len(), 3, "Should have 3 content lines");
+        for line in &content_lines {
+            assert!(line.starts_with("│"), "Content line should start with │: {}", line);
+        }
+    }
+
+    #[test]
+    fn test_code_block_footer() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">rust</ac:parameter>
+            <ac:plain-text-body>fn main(){}</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Code", html).unwrap();
+
+        // Footer should close the box
+        let footer = result.lines.iter()
+            .find(|l| l.starts_with("└") && l.ends_with("┘"));
+
+        assert!(footer.is_some(), "Missing code block footer");
+    }
+
+    #[test]
+    fn test_code_block_preserves_indentation() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">python</ac:parameter>
+            <ac:plain-text-body>def foo():
+    return 42</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Code", html).unwrap();
+        let output = result.lines.join("\n");
+
+        // Indentation should be preserved in output
+        assert!(output.contains("def foo():"), "Function definition missing");
+        // The return line should have leading spaces after the │
+        let return_line = result.lines.iter()
+            .find(|l| l.contains("return 42"));
+        assert!(return_line.is_some(), "Return statement missing");
+    }
+
+    // -------------------------------------------------------------------------
+    // MACRO PANEL VISUAL TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_info_panel_exact_format() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Important info here</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Info", html).unwrap();
+
+        // Find the header line
+        let header = result.lines.iter()
+            .find(|l| l.contains("ℹ") && l.contains("INFO"));
+
+        assert!(header.is_some(), "Info panel header missing");
+        let h = header.unwrap();
+        assert!(h.starts_with("┌─"), "Panel header should start with ┌─");
+        assert!(h.contains("─".repeat(10).as_str()), "Header should have dash extension");
+    }
+
+    #[test]
+    fn test_warning_panel_icon_and_label() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="warning">
+            <ac:rich-text-body>Caution required</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Warn", html).unwrap();
+
+        let header = result.lines.iter()
+            .find(|l| l.contains("⚠") && l.contains("WARNING"));
+
+        assert!(header.is_some(), "Warning panel should have ⚠ icon and WARNING label");
+    }
+
+    #[test]
+    fn test_error_panel_icon_and_label() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="error">
+            <ac:rich-text-body>Error occurred</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Err", html).unwrap();
+
+        let header = result.lines.iter()
+            .find(|l| l.contains("✗") && l.contains("ERROR"));
+
+        assert!(header.is_some(), "Error panel should have ✗ icon and ERROR label");
+    }
+
+    #[test]
+    fn test_panel_content_indentation() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="note">
+            <ac:rich-text-body>Note content line</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Note", html).unwrap();
+
+        // Content lines should have "│ " prefix
+        let content = result.lines.iter()
+            .find(|l| l.contains("Note content"));
+
+        assert!(content.is_some(), "Panel content missing");
+        let c = content.unwrap();
+        assert!(c.starts_with("│ ") || c.starts_with("│"), "Content should be indented with │");
+    }
+
+    #[test]
+    fn test_panel_multiline_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body><p>Line one</p><p>Line two</p></ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Multi", html).unwrap();
+
+        let line1 = result.lines.iter().any(|l| l.contains("Line one"));
+        let line2 = result.lines.iter().any(|l| l.contains("Line two"));
+
+        assert!(line1, "First line missing from panel");
+        assert!(line2, "Second line missing from panel");
+    }
+
+    #[test]
+    fn test_panel_footer_closure() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Test</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Footer", html).unwrap();
+
+        let footer = result.lines.iter()
+            .find(|l| l.starts_with("└") && l.contains("─") && l.ends_with("┘"));
+
+        assert!(footer.is_some(), "Panel should have closing footer with └ and ┘");
+    }
+
+    // -------------------------------------------------------------------------
+    // LIST VISUAL TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_unordered_list_bullets() {
+        let renderer = Renderer::new();
+        let html = r#"<ul>
+            <li>First item</li>
+            <li>Second item</li>
+            <li>Third item</li>
+        </ul>"#;
+        let result = renderer.render("123", "UL", html).unwrap();
+
+        // Each list item should have bullet point
+        let items_with_bullets: Vec<_> = result.lines.iter()
+            .filter(|l| l.contains("•"))
+            .collect();
+
+        assert!(items_with_bullets.len() >= 3, "Should have 3 bullet points");
+        assert!(result.lines.iter().any(|l| l.contains("• First")));
+        assert!(result.lines.iter().any(|l| l.contains("• Second")));
+        assert!(result.lines.iter().any(|l| l.contains("• Third")));
+    }
+
+    #[test]
+    fn test_ordered_list_numbers() {
+        let renderer = Renderer::new();
+        let html = r#"<ol>
+            <li>First</li>
+            <li>Second</li>
+            <li>Third</li>
+        </ol>"#;
+        let result = renderer.render("123", "OL", html).unwrap();
+
+        assert!(result.lines.iter().any(|l| l.contains("1.") && l.contains("First")));
+        assert!(result.lines.iter().any(|l| l.contains("2.") && l.contains("Second")));
+        assert!(result.lines.iter().any(|l| l.contains("3.") && l.contains("Third")));
+    }
+
+    #[test]
+    fn test_list_indentation_consistency() {
+        let renderer = Renderer::new();
+        let html = r#"<ul>
+            <li>Alpha</li>
+            <li>Beta</li>
+        </ul>"#;
+        let result = renderer.render("123", "Indent", html).unwrap();
+
+        // Find list item lines
+        let alpha_line = result.lines.iter().find(|l| l.contains("Alpha"));
+        let beta_line = result.lines.iter().find(|l| l.contains("Beta"));
+
+        if let (Some(a), Some(b)) = (alpha_line, beta_line) {
+            let a_indent = a.chars().take_while(|c| c.is_whitespace()).count();
+            let b_indent = b.chars().take_while(|c| c.is_whitespace()).count();
+            assert_eq!(a_indent, b_indent, "List items should have consistent indentation");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // HEADING VISUAL TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_heading_hash_counts() {
+        let renderer = Renderer::new();
+        let html = r#"
+            <h1>Level 1</h1>
+            <h2>Level 2</h2>
+            <h3>Level 3</h3>
+            <h4>Level 4</h4>
+            <h5>Level 5</h5>
+            <h6>Level 6</h6>
+        "#;
+        let result = renderer.render("123", "Heads", html).unwrap();
+
+        assert!(result.lines.iter().any(|l| l.starts_with("# Level 1")));
+        assert!(result.lines.iter().any(|l| l.starts_with("## Level 2")));
+        assert!(result.lines.iter().any(|l| l.starts_with("### Level 3")));
+        assert!(result.lines.iter().any(|l| l.starts_with("#### Level 4")));
+        assert!(result.lines.iter().any(|l| l.starts_with("##### Level 5")));
+        assert!(result.lines.iter().any(|l| l.starts_with("###### Level 6")));
+    }
+
+    #[test]
+    fn test_heading_text_follows_hashes() {
+        let renderer = Renderer::new();
+        let html = "<h2>My Important Section</h2>";
+        let result = renderer.render("123", "H2", html).unwrap();
+
+        let heading = result.lines.iter()
+            .find(|l| l.contains("Important Section"));
+
+        assert!(heading.is_some(), "Heading text missing");
+        let h = heading.unwrap();
+        assert!(h.starts_with("## "), "H2 should have exactly 2 hashes followed by space");
+        assert!(h.ends_with("Section"), "Text should follow the hashes");
+    }
+
+    // -------------------------------------------------------------------------
+    // INLINE FORMATTING VISUAL TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_bold_asterisks() {
+        let renderer = Renderer::new();
+        let html = "<p><strong>Bold text</strong></p>";
+        let result = renderer.render("123", "Bold", html).unwrap();
+
+        assert!(result.lines.iter().any(|l| l.contains("**Bold text**")));
+    }
+
+    #[test]
+    fn test_italic_asterisks() {
+        let renderer = Renderer::new();
+        let html = "<p><em>Italic text</em></p>";
+        let result = renderer.render("123", "Italic", html).unwrap();
+
+        assert!(result.lines.iter().any(|l| l.contains("*Italic text*")));
+    }
+
+    #[test]
+    fn test_inline_code_backticks() {
+        let renderer = Renderer::new();
+        let html = "<p>Use <code>npm install</code> to install</p>";
+        let result = renderer.render("123", "Inline", html).unwrap();
+
+        assert!(result.lines.iter().any(|l| l.contains("`npm install`")));
+    }
+
+    // -------------------------------------------------------------------------
+    // DOCUMENT LAYOUT TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_blank_line_before_heading() {
+        let renderer = Renderer::new();
+        let html = "<p>Paragraph</p><h2>Heading</h2>";
+        let result = renderer.render("123", "Layout", html).unwrap();
+
+        // Find the paragraph and heading indices
+        let para_idx = result.lines.iter().position(|l| l.contains("Paragraph"));
+        let head_idx = result.lines.iter().position(|l| l.contains("## Heading"));
+
+        if let (Some(p), Some(h)) = (para_idx, head_idx) {
+            assert!(h > p + 1, "Should have blank line between paragraph and heading");
+        }
+    }
+
+    #[test]
+    fn test_blank_line_around_code_block() {
+        let renderer = Renderer::new();
+        let html = r#"<p>Before</p>
+            <ac:structured-macro ac:name="code">
+                <ac:parameter ac:name="language">rust</ac:parameter>
+                <ac:plain-text-body>code</ac:plain-text-body>
+            </ac:structured-macro>
+            <p>After</p>"#;
+        let result = renderer.render("123", "CodeLayout", html).unwrap();
+
+        let before_idx = result.lines.iter().position(|l| l.contains("Before"));
+        let code_start_idx = result.lines.iter().position(|l| l.contains("┌─") && l.contains("RUST"));
+
+        if let (Some(b), Some(c)) = (before_idx, code_start_idx) {
+            assert!(c > b + 1, "Should have spacing before code block");
+        }
+    }
+
+    #[test]
+    fn test_blank_line_around_table() {
+        let renderer = Renderer::new();
+        let html = r#"<p>Intro</p>
+            <table><tr><th>X</th></tr><tr><td>Y</td></tr></table>
+            <p>Conclusion</p>"#;
+        let result = renderer.render("123", "TableLayout", html).unwrap();
+
+        let intro_idx = result.lines.iter().position(|l| l.contains("Intro"));
+        let table_start_idx = result.lines.iter().position(|l| l.starts_with("┌"));
+
+        if let (Some(i), Some(t)) = (intro_idx, table_start_idx) {
+            assert!(t > i + 1, "Should have spacing before table");
+        }
+    }
+
+    #[test]
+    fn test_blank_line_around_list() {
+        let renderer = Renderer::new();
+        let html = r#"<p>Start</p>
+            <ul><li>Item</li></ul>
+            <p>End</p>"#;
+        let result = renderer.render("123", "ListLayout", html).unwrap();
+
+        let start_idx = result.lines.iter().position(|l| l.contains("Start"));
+        let item_idx = result.lines.iter().position(|l| l.contains("• Item"));
+
+        if let (Some(s), Some(i)) = (start_idx, item_idx) {
+            assert!(i > s + 1, "Should have spacing before list");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // COMBINED VISUAL STRUCTURE TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_full_document_visual_structure() {
+        let renderer = Renderer::new();
+        let html = r#"
+            <h1>Documentation</h1>
+            <p>Welcome to the docs.</p>
+            <ac:structured-macro ac:name="info">
+                <ac:rich-text-body>Read this first!</ac:rich-text-body>
+            </ac:structured-macro>
+            <h2>Features</h2>
+            <ul>
+                <li>Feature A</li>
+                <li>Feature B</li>
+            </ul>
+            <table>
+                <tr><th>Name</th><th>Status</th></tr>
+                <tr><td>Alpha</td><td>Done</td></tr>
+            </table>
+            <ac:structured-macro ac:name="code">
+                <ac:parameter ac:name="language">bash</ac:parameter>
+                <ac:plain-text-body>./install.sh</ac:plain-text-body>
+            </ac:structured-macro>
+        "#;
+        let result = renderer.render("123", "Full", html).unwrap();
+        let output = result.lines.join("\n");
+
+        // Verify document structure order
+        let h1_pos = output.find("# Documentation").unwrap_or(usize::MAX);
+        let para_pos = output.find("Welcome").unwrap_or(usize::MAX);
+        let info_pos = output.find("ℹ").unwrap_or(usize::MAX);
+        let h2_pos = output.find("## Features").unwrap_or(usize::MAX);
+        let list_pos = output.find("• Feature A").unwrap_or(usize::MAX);
+        let _table_pos = output.find("┌").unwrap_or(usize::MAX);
+
+        assert!(h1_pos < para_pos, "H1 should come before paragraph");
+        assert!(para_pos < info_pos, "Paragraph should come before info panel");
+        assert!(info_pos < h2_pos, "Info should come before H2");
+        assert!(h2_pos < list_pos, "H2 should come before list");
+
+        // Verify all box drawing elements present
+        assert!(output.contains("┌"), "Missing box top-left");
+        assert!(output.contains("└"), "Missing box bottom-left");
+        assert!(output.contains("│"), "Missing box vertical bars");
+        assert!(output.contains("┘"), "Missing box bottom-right");
+    }
+
+    #[test]
+    fn test_visual_consistency_across_elements() {
+        let renderer = Renderer::new();
+        let html = r#"
+            <ac:structured-macro ac:name="info">
+                <ac:rich-text-body>Info</ac:rich-text-body>
+            </ac:structured-macro>
+            <ac:structured-macro ac:name="warning">
+                <ac:rich-text-body>Warning</ac:rich-text-body>
+            </ac:structured-macro>
+            <ac:structured-macro ac:name="code">
+                <ac:parameter ac:name="language">txt</ac:parameter>
+                <ac:plain-text-body>code</ac:plain-text-body>
+            </ac:structured-macro>
+        "#;
+        let result = renderer.render("123", "Consistent", html).unwrap();
+
+        // Count opening and closing corners - should be balanced
+        let open_corners: usize = result.lines.iter()
+            .filter(|l| l.starts_with("┌"))
+            .count();
+        let close_corners: usize = result.lines.iter()
+            .filter(|l| l.starts_with("└"))
+            .count();
+
+        assert_eq!(open_corners, close_corners, "Box corners should be balanced");
+        assert!(open_corners >= 3, "Should have at least 3 box elements (2 panels + 1 code)");
+    }
+
+    #[test]
+    fn test_no_consecutive_double_blank_lines() {
+        let renderer = Renderer::new();
+        let html = r#"
+            <h1>Title</h1>
+            <p>Para 1</p>
+            <p>Para 2</p>
+            <ac:structured-macro ac:name="info">
+                <ac:rich-text-body>Info</ac:rich-text-body>
+            </ac:structured-macro>
+            <h2>Section</h2>
+            <ul><li>Item</li></ul>
+        "#;
+        let result = renderer.render("123", "NoDoubleBlank", html).unwrap();
+
+        let mut consecutive_blanks = 0;
+        let mut max_consecutive = 0;
+
+        for line in &result.lines {
+            if line.is_empty() {
+                consecutive_blanks += 1;
+                max_consecutive = max_consecutive.max(consecutive_blanks);
+            } else {
+                consecutive_blanks = 0;
+            }
+        }
+
+        assert!(
+            max_consecutive <= 2,
+            "Should not have more than 2 consecutive blank lines, found {}",
+            max_consecutive
+        );
+    }
 }
