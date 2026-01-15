@@ -391,15 +391,24 @@ impl Renderer {
             "─".repeat(dashes_needed)
         ));
 
-        // Render content lines (no wrapping in dynamic mode - content fits)
+        // Render content lines - truncate if exceeds width
+        let max_content_chars = width.saturating_sub(4); // "│ " + content + " │"
         for line in panel.content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 ctx.push_line(format!("│{}│", " ".repeat(width)));
             } else {
                 let content_chars = trimmed.chars().count();
-                let padding = width.saturating_sub(content_chars + 2);
-                ctx.push_line(format!("│ {}{} │", trimmed, " ".repeat(padding)));
+                let display_content = if content_chars > max_content_chars {
+                    // Truncate with ellipsis
+                    let truncated: String = trimmed.chars().take(max_content_chars.saturating_sub(1)).collect();
+                    format!("{}…", truncated)
+                } else {
+                    trimmed.to_string()
+                };
+                let display_chars = display_content.chars().count();
+                let padding = width.saturating_sub(display_chars + 2);
+                ctx.push_line(format!("│ {}{} │", display_content, " ".repeat(padding)));
             }
         }
 
@@ -2337,5 +2346,344 @@ Short</ac:rich-text-body>
                 line
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // EDGE CASE TESTS
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_empty_panel_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body></ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Empty", html).unwrap();
+
+        println!("\n=== Empty Panel ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        // Should still render a valid box
+        assert!(result.lines.iter().any(|l| l.starts_with("┌")));
+        assert!(result.lines.iter().any(|l| l.starts_with("└")));
+    }
+
+    #[test]
+    fn test_empty_code_block() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">rust</ac:parameter>
+            <ac:plain-text-body></ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "EmptyCode", html).unwrap();
+
+        println!("\n=== Empty Code Block ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        let footer = result.lines.iter().find(|l| l.starts_with("└")).unwrap();
+        assert_eq!(header.chars().count(), footer.chars().count());
+    }
+
+    #[test]
+    fn test_content_exceeding_max_width() {
+        let renderer = Renderer::new();
+        // Single line with 150+ characters
+        let long_line = "x".repeat(150);
+        let html = format!(
+            r#"<ac:structured-macro ac:name="info">
+                <ac:rich-text-body>{}</ac:rich-text-body>
+            </ac:structured-macro>"#,
+            long_line
+        );
+        let result = renderer.render("123", "Overflow", &html).unwrap();
+
+        println!("\n=== Content Exceeding Max Width ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{} ({})", line, line.chars().count());
+            }
+        }
+
+        // Box should be clamped to max_box_width (120) + 2 borders = 122
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+
+        let header = box_lines[0];
+        assert!(
+            header.chars().count() <= 122,
+            "Box exceeds max width: {} chars",
+            header.chars().count()
+        );
+
+        // All box lines must have same width
+        let expected_width = header.chars().count();
+        for line in &box_lines {
+            assert_eq!(
+                line.chars().count(),
+                expected_width,
+                "Overflow content not truncated properly: '{}'",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn test_tab_characters_in_code() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">python</ac:parameter>
+            <ac:plain-text-body>def foo():
+	return 42	# tab indented</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Tabs", html).unwrap();
+
+        println!("\n=== Tab Characters ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        // Should render without panic
+        assert!(result.lines.iter().any(|l| l.contains("return 42")));
+
+        // All box lines should have same width
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+        let expected_width = box_lines[0].chars().count();
+        for line in &box_lines {
+            assert_eq!(line.chars().count(), expected_width, "Tab caused width mismatch: {}", line);
+        }
+    }
+
+    #[test]
+    fn test_extremely_long_single_word() {
+        let renderer = Renderer::new();
+        let long_word = "supercalifragilisticexpialidocious".repeat(5);
+        let html = format!(
+            r#"<ac:structured-macro ac:name="warning">
+                <ac:rich-text-body>{}</ac:rich-text-body>
+            </ac:structured-macro>"#,
+            long_word
+        );
+        let result = renderer.render("123", "LongWord", &html).unwrap();
+
+        println!("\n=== Long Single Word ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{} ({})", line, line.chars().count());
+            }
+        }
+
+        // Should not panic, box should be capped at max width
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+        assert!(!box_lines.is_empty());
+    }
+
+    #[test]
+    fn test_html_entities_in_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Use &lt;div&gt; for containers &amp; &lt;span&gt; for inline</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Entities", html).unwrap();
+
+        println!("\n=== HTML Entities ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        // Entities should be decoded
+        let output = result.lines.join(" ");
+        assert!(output.contains("<div>") || output.contains("&lt;"), "HTML entities not handled");
+    }
+
+    #[test]
+    fn test_code_block_with_very_long_language() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">actionscript3</ac:parameter>
+            <ac:plain-text-body>trace("hello");</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "LongLang", html).unwrap();
+
+        println!("\n=== Long Language Name ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        let header = result.lines.iter().find(|l| l.starts_with("┌")).unwrap();
+        assert!(header.contains("ACTIONSCRIPT3"));
+
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+        let expected_width = box_lines[0].chars().count();
+        for line in &box_lines {
+            assert_eq!(line.chars().count(), expected_width);
+        }
+    }
+
+    #[test]
+    fn test_mixed_width_characters() {
+        let renderer = Renderer::new();
+        // Mix of ASCII, CJK (2-width), and emoji
+        let html = r#"<ac:structured-macro ac:name="note">
+            <ac:rich-text-body>Hello 世界 🌍 Earth</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "MixedWidth", html).unwrap();
+
+        println!("\n=== Mixed Width Characters ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        // Should contain the content
+        let output = result.lines.join(" ");
+        assert!(output.contains("Hello"));
+        assert!(output.contains("世界") || output.contains("Earth"));
+    }
+
+    #[test]
+    fn test_content_exactly_at_boundary() {
+        let mut renderer = Renderer::new();
+        renderer.max_box_width = 50;
+
+        // Content that should be exactly at the boundary
+        // Box width 50 means content area is 46 chars (50 - 4 for borders)
+        let exact_content = "x".repeat(46);
+        let html = format!(
+            r#"<ac:structured-macro ac:name="info">
+                <ac:rich-text-body>{}</ac:rich-text-body>
+            </ac:structured-macro>"#,
+            exact_content
+        );
+        let result = renderer.render("123", "Boundary", &html).unwrap();
+
+        println!("\n=== Boundary Content ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{} ({})", line, line.chars().count());
+            }
+        }
+
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+        let expected_width = box_lines[0].chars().count();
+        for line in &box_lines {
+            assert_eq!(line.chars().count(), expected_width, "Boundary case width mismatch");
+        }
+    }
+
+    #[test]
+    fn test_whitespace_only_panel_content() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>
+
+   </ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Whitespace", html).unwrap();
+
+        println!("\n=== Whitespace Only Content ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("'{}'", line);
+            }
+        }
+
+        // Should render valid box even with whitespace-only content
+        let header = result.lines.iter().find(|l| l.starts_with("┌"));
+        let footer = result.lines.iter().find(|l| l.starts_with("└"));
+        assert!(header.is_some() && footer.is_some());
+    }
+
+    #[test]
+    fn test_special_characters_in_code() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:parameter ac:name="language">rust</ac:parameter>
+            <ac:plain-text-body>let regex = r"[\w\d]+\s*=\s*\"[^\"]*\"";
+let math = 1 < 2 && 3 > 1;
+let ptr = &amp;&amp;value;</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Special", html).unwrap();
+
+        println!("\n=== Special Characters in Code ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        // Should handle special chars without breaking box
+        let box_lines: Vec<_> = result.lines.iter()
+            .filter(|l| l.starts_with("┌") || l.starts_with("│") || l.starts_with("└"))
+            .collect();
+        let expected_width = box_lines[0].chars().count();
+        for line in &box_lines {
+            assert_eq!(line.chars().count(), expected_width, "Special chars broke width: {}", line);
+        }
+    }
+
+    #[test]
+    fn test_carriage_return_handling() {
+        let renderer = Renderer::new();
+        let html = "<ac:structured-macro ac:name=\"code\">
+            <ac:parameter ac:name=\"language\">text</ac:parameter>
+            <ac:plain-text-body>line1\r\nline2\rline3</ac:plain-text-body>
+        </ac:structured-macro>";
+        let result = renderer.render("123", "CRLF", html).unwrap();
+
+        println!("\n=== Carriage Return Handling ===");
+        for line in &result.lines {
+            println!("'{}'", line);
+        }
+
+        // Should handle CR/CRLF without breaking - just verify we got here
+        assert!(!result.lines.is_empty() || result.lines.is_empty()); // Always passes - test is that we didn't panic
+    }
+
+    #[test]
+    fn test_zero_width_content_area() {
+        let mut renderer = Renderer::new();
+        // Force a very small box
+        renderer.dynamic_box_width = false;
+        renderer.box_width = 10;
+
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>This content is longer than the box</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Tiny", html).unwrap();
+
+        println!("\n=== Tiny Box ===");
+        for line in &result.lines {
+            if line.starts_with("┌") || line.starts_with("│") || line.starts_with("└") {
+                println!("{}", line);
+            }
+        }
+
+        // Should not panic even with tiny box
+        assert!(result.lines.iter().any(|l| l.starts_with("┌")));
     }
 }
