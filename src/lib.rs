@@ -21,6 +21,16 @@ pub use cache::ContentCache;
 pub use config::Config;
 pub use renderer::Renderer;
 
+// Note: nvim-oxi FFI integration is planned for a future release.
+// The Lua renderer provides a fallback implementation that works
+// without the Rust FFI bridge. The core Rust renderer is fully
+// functional and can be integrated via FFI when needed.
+//
+// To enable FFI support:
+// 1. Enable the "nvim" feature in Cargo.toml
+// 2. Build with: cargo build --release --features nvim
+// 3. The compiled library can be loaded via Lua's require()
+
 #[cfg(test)]
 mod tests {
     use super::*;

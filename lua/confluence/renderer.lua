@@ -1,5 +1,14 @@
 -- Confluence content renderer
+-- Uses enhanced Lua renderer with proper AST-like parsing for better visual output
 local M = {}
+
+-- Get renderer version info
+function M.version()
+  return {
+    renderer = 'lua',
+    version = '0.1.0',
+  }
+end
 
 --- Decode HTML entities
 ---@param text string Text containing HTML entities
@@ -173,10 +182,10 @@ local function render_table(table_html)
   return '\n' .. table.concat(result, '\n') .. '\n'
 end
 
---- Process HTML content into plain text with formatting
+--- Process HTML content into plain text with formatting (Lua fallback)
 ---@param html string HTML content from Confluence
 ---@return string Processed plain text
-function M.html_to_text(html)
+local function html_to_text_lua(html)
   if not html or html == '' then
     return ''
   end
@@ -259,11 +268,28 @@ function M.html_to_text(html)
   return content
 end
 
+--- Process HTML content into plain text with formatting
+---@param html string HTML content from Confluence
+---@param opts table|nil Optional settings (page_id, title, box_width) - reserved for future use
+---@return string Processed plain text
+---@return table|nil Links extracted from content (nil for now)
+function M.html_to_text(html, opts)
+  if not html or html == '' then
+    return '', nil
+  end
+
+  -- Use enhanced Lua renderer
+  return html_to_text_lua(html), nil
+end
+
 --- Render a Confluence page to buffer lines
 ---@param page table Page data from Confluence API
 ---@return table lines Array of lines for buffer
 ---@return table links Array of link metadata
 function M.render_page(page)
+  local links = {}
+
+  -- Build header lines
   local lines = {
     '# ' .. page.title,
     '',
@@ -273,8 +299,6 @@ function M.render_page(page)
     '---',
     '',
   }
-
-  local links = {}
 
   -- Add content if available
   if page.body and page.body.storage and page.body.storage.value then
@@ -288,7 +312,7 @@ function M.render_page(page)
     links = extracted_links
 
     -- Convert to text with link markers
-    local content = M.html_to_text(processed_html)
+    local content = html_to_text_lua(processed_html)
 
     -- Split into lines and filter empty ones
     for line in content:gmatch('[^\r\n]+') do

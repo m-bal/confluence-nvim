@@ -134,11 +134,6 @@ impl ConfluenceAst {
         }
     }
 
-    /// Legacy parse_node for compatibility - redirects to depth-tracked version
-    fn parse_node(node: ego_tree::NodeRef<Node>) -> Option<AstNode> {
-        Self::parse_node_with_depth(node, 0).ok().flatten()
-    }
-
     /// Parse element with depth tracking and security filtering (H-02)
     fn parse_element_ref_with_depth(
         element: ElementRef,
@@ -245,11 +240,6 @@ impl ConfluenceAst {
         Ok(result)
     }
 
-    /// Legacy parse_element_ref for compatibility
-    fn parse_element_ref(element: ElementRef) -> Option<AstNode> {
-        Self::parse_element_ref_with_depth(element, 0).ok().flatten()
-    }
-
     /// Parse element children with depth tracking
     fn parse_element_children_with_depth(
         element: ElementRef,
@@ -259,11 +249,6 @@ impl ConfluenceAst {
             .children()
             .filter_map(|child| Self::parse_node_with_depth(child, depth).transpose())
             .collect()
-    }
-
-    /// Legacy version for compatibility
-    fn parse_element_children(element: ElementRef) -> Vec<AstNode> {
-        Self::parse_element_children_with_depth(element, 0).unwrap_or_default()
     }
 
     /// Parse list with depth tracking (C-06: Uses static selector)
@@ -278,14 +263,6 @@ impl ConfluenceAst {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(AstNode::List { ordered, items })
-    }
-
-    /// Legacy version
-    fn parse_list(element: ElementRef, ordered: bool) -> AstNode {
-        Self::parse_list_with_depth(element, ordered, 0).unwrap_or(AstNode::List {
-            ordered,
-            items: vec![],
-        })
     }
 
     /// Parse table with depth tracking (C-06: Uses static selectors)
@@ -321,11 +298,6 @@ impl ConfluenceAst {
         }
     }
 
-    /// Legacy version
-    fn parse_table(element: ElementRef) -> Option<AstNode> {
-        Self::parse_table_with_depth(element, 0).ok().flatten()
-    }
-
     /// Parse macro with depth tracking (C-06: Uses static selectors)
     fn parse_macro_with_depth(
         element: ElementRef,
@@ -353,10 +325,6 @@ impl ConfluenceAst {
         Ok(Some(AstNode::Macro { name, params, body }))
     }
 
-    /// Legacy version
-    fn parse_macro(element: ElementRef) -> Option<AstNode> {
-        Self::parse_macro_with_depth(element, 0).ok().flatten()
-    }
 }
 
 #[cfg(test)]

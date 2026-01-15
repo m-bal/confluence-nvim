@@ -13,6 +13,10 @@ categories = ["text-editors", "api-bindings"]
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = []
+nvim = []  # Planned: nvim-oxi FFI integration
+
 [dependencies]
 # Neovim integration
 nvim-oxi = { version = "0.5", features = ["neovim-0-10"] }
