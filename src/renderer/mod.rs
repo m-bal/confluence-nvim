@@ -467,8 +467,12 @@ impl Renderer {
                     result.push_str(&self.collect_text(children));
                 }
                 AstNode::Code(text) => result.push_str(text),
-                AstNode::Link { text, .. } => {
+                AstNode::Link { url, text } => {
                     result.push_str(&self.collect_text(text));
+                    // Add arrow for Confluence internal links
+                    if url.contains("/wiki/spaces/") || url.contains("/pages/") {
+                        result.push_str(" →");
+                    }
                 }
                 AstNode::Paragraph(children) => {
                     result.push_str(&self.collect_text(children));
@@ -813,5 +817,441 @@ mod tests {
         assert!(rendered.lines.iter().any(|l| l.contains("• Install")));
         assert!(rendered.lines.iter().any(|l| l.contains("BASH")));
         assert!(rendered.lines.iter().any(|l| l.contains("npm install")));
+    }
+
+    // =========================================================================
+    // EDGE CASE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_whitespace_only_content() {
+        let renderer = Renderer::new();
+        let result = renderer.render("123", "Test", "   \n\t\n   ");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unicode_content() {
+        let renderer = Renderer::new();
+        let html = "<p>日本語テスト 中文测试 한국어테스트</p>";
+        let result = renderer.render("123", "Unicode", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("日本語")));
+    }
+
+    #[test]
+    fn test_emoji_content() {
+        let renderer = Renderer::new();
+        let html = "<p>🎉 Celebration! 🚀 Launch</p>";
+        let result = renderer.render("123", "Emoji", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("🎉")));
+    }
+
+    #[test]
+    fn test_very_long_line() {
+        let renderer = Renderer::new();
+        let long_text = "A".repeat(5000);
+        let html = format!("<p>{}</p>", long_text);
+        let result = renderer.render("123", "Long", &html);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_many_paragraphs() {
+        let renderer = Renderer::new();
+        let paragraphs: String = (0..100)
+            .map(|i| format!("<p>Para {}</p>", i))
+            .collect();
+        let result = renderer.render("123", "Many", &paragraphs);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("Para 0")));
+        assert!(rendered.lines.iter().any(|l| l.contains("Para 99")));
+    }
+
+    #[test]
+    fn test_empty_tags() {
+        let renderer = Renderer::new();
+        let html = "<p></p><div></div><span></span>";
+        let result = renderer.render("123", "Empty", html);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_nested_inline_formatting() {
+        let renderer = Renderer::new();
+        let html = "<p><strong><em><code>deep</code></em></strong></p>";
+        let result = renderer.render("123", "Nested", html);
+        assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // COMPLEX STRUCTURE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_nested_lists() {
+        let renderer = Renderer::new();
+        let html = r#"<ul><li>A<ul><li>Nested</li></ul></li><li>B</li></ul>"#;
+        let result = renderer.render("123", "Nested Lists", html);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_table_empty_cells() {
+        let renderer = Renderer::new();
+        let html = "<table><tr><th>H</th></tr><tr><td></td></tr><tr><td>Data</td></tr></table>";
+        let result = renderer.render("123", "Empty Cells", html);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_heading_hierarchy() {
+        let renderer = Renderer::new();
+        let html = "<h1>H1</h1><h2>H2</h2><h3>H3</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>";
+        let result = renderer.render("123", "Headings", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.starts_with("# H1")));
+        assert!(rendered.lines.iter().any(|l| l.starts_with("###### H6")));
+    }
+
+    // =========================================================================
+    // LINK TRACKING TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_multiple_links() {
+        let renderer = Renderer::new();
+        let html = r#"<p>
+            <a href="/wiki/spaces/A/pages/1">L1</a>
+            <a href="/wiki/spaces/B/pages/2">L2</a>
+            <a href="/wiki/spaces/C/pages/3">L3</a>
+        </p>"#;
+        let result = renderer.render("123", "Links", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.links.len() >= 3);
+    }
+
+    #[test]
+    fn test_external_link_no_arrow() {
+        let renderer = Renderer::new();
+        let html = r#"<p><a href="https://example.com">External</a></p>"#;
+        let result = renderer.render("123", "External", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        let combined = rendered.lines.join(" ");
+        assert!(combined.contains("External"));
+        assert!(!combined.contains("External →"));
+    }
+
+    #[test]
+    fn test_internal_link_has_arrow() {
+        let renderer = Renderer::new();
+        let html = r#"<p><a href="/wiki/spaces/T/pages/1">Internal</a></p>"#;
+        let result = renderer.render("123", "Internal", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("Internal →")));
+    }
+
+    #[test]
+    fn test_empty_href() {
+        let renderer = Renderer::new();
+        let html = r#"<p><a href="">Empty</a></p>"#;
+        let result = renderer.render("123", "Empty Href", html);
+        assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // MACRO TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_note_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="note">
+            <ac:rich-text-body>Note content</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Note", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("📝")));
+        assert!(rendered.lines.iter().any(|l| l.contains("NOTE")));
+    }
+
+    #[test]
+    fn test_tip_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="tip">
+            <ac:rich-text-body>Tip</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Tip", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("SUCCESS")));
+    }
+
+    #[test]
+    fn test_error_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="error">
+            <ac:rich-text-body>Error</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Error", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("ERROR")));
+    }
+
+    #[test]
+    fn test_code_without_language() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="code">
+            <ac:plain-text-body>code</ac:plain-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "NoLang", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("TEXT")));
+    }
+
+    #[test]
+    fn test_expand_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="expand">
+            <ac:parameter ac:name="title">Details</ac:parameter>
+            <ac:rich-text-body>Hidden</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Expand", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("▶")));
+    }
+
+    #[test]
+    fn test_toc_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="toc"></ac:structured-macro>"#;
+        let result = renderer.render("123", "TOC", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("📑")));
+    }
+
+    #[test]
+    fn test_status_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="status">
+            <ac:parameter ac:name="colour">Green</ac:parameter>
+            <ac:parameter ac:name="title">Done</ac:parameter>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Status", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("[GREEN:Done]")));
+    }
+
+    #[test]
+    fn test_unknown_macro() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="custom">
+            <ac:rich-text-body>Content</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Custom", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("CUSTOM")));
+    }
+
+    #[test]
+    fn test_anchor_invisible() {
+        let renderer = Renderer::new();
+        let html = r#"<p>Before</p>
+            <ac:structured-macro ac:name="anchor">
+                <ac:parameter ac:name="name">anchor1</ac:parameter>
+            </ac:structured-macro>
+            <p>After</p>"#;
+        let result = renderer.render("123", "Anchor", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("Before")));
+        assert!(rendered.lines.iter().any(|l| l.contains("After")));
+    }
+
+    // =========================================================================
+    // SECURITY TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_script_filtered() {
+        let renderer = Renderer::new();
+        let html = "<p>Safe</p><script>alert('xss')</script><p>Also safe</p>";
+        let result = renderer.render("123", "Script", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        let combined = rendered.lines.join(" ");
+        assert!(!combined.contains("alert"));
+        assert!(combined.contains("Safe"));
+    }
+
+    #[test]
+    fn test_style_filtered() {
+        let renderer = Renderer::new();
+        let html = "<style>body{background:red}</style><p>Content</p>";
+        let result = renderer.render("123", "Style", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        let combined = rendered.lines.join(" ");
+        assert!(!combined.contains("background"));
+    }
+
+    #[test]
+    fn test_iframe_filtered() {
+        let renderer = Renderer::new();
+        let html = r#"<p>Safe</p><iframe src="https://evil.com"></iframe>"#;
+        let result = renderer.render("123", "Iframe", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        let combined = rendered.lines.join(" ");
+        assert!(!combined.contains("evil.com"));
+    }
+
+    // =========================================================================
+    // BOX DRAWING TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_panel_box_structure() {
+        let renderer = Renderer::new();
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Test</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Box", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert!(rendered.lines.iter().any(|l| l.contains("┌")));
+        assert!(rendered.lines.iter().any(|l| l.contains("┐")));
+        assert!(rendered.lines.iter().any(|l| l.contains("└")));
+        assert!(rendered.lines.iter().any(|l| l.contains("┘")));
+        assert!(rendered.lines.iter().any(|l| l.contains("│")));
+    }
+
+    #[test]
+    fn test_custom_box_width() {
+        let mut renderer = Renderer::new();
+        renderer.box_width = 40;
+        let html = r#"<ac:structured-macro ac:name="info">
+            <ac:rich-text-body>Short</ac:rich-text-body>
+        </ac:structured-macro>"#;
+        let result = renderer.render("123", "Width", html);
+        assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // METADATA TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_metadata_unicode_title() {
+        let renderer = Renderer::new();
+        let result = renderer.render("123", "日本語タイトル", "<p>Content</p>");
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert_eq!(rendered.metadata.title, "日本語タイトル");
+    }
+
+    #[test]
+    fn test_metadata_special_id() {
+        let renderer = Renderer::new();
+        let result = renderer.render("abc-123_xyz", "Test", "<p>Content</p>");
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+        assert_eq!(rendered.metadata.page_id, "abc-123_xyz");
+    }
+
+    // =========================================================================
+    // INTEGRATION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_realistic_api_doc_page() {
+        let renderer = Renderer::new();
+        let html = r#"
+            <h1>API Documentation</h1>
+            <p>REST API endpoints.</p>
+            <ac:structured-macro ac:name="toc"></ac:structured-macro>
+            <h2>Authentication</h2>
+            <ac:structured-macro ac:name="info">
+                <ac:rich-text-body>Bearer token required.</ac:rich-text-body>
+            </ac:structured-macro>
+            <h3>Get Token</h3>
+            <p>POST to <code>/api/auth</code></p>
+            <ac:structured-macro ac:name="code">
+                <ac:parameter ac:name="language">bash</ac:parameter>
+                <ac:plain-text-body>curl -X POST /api/auth</ac:plain-text-body>
+            </ac:structured-macro>
+            <h2>Endpoints</h2>
+            <table>
+                <tr><th>Method</th><th>Path</th></tr>
+                <tr><td>GET</td><td>/users</td></tr>
+                <tr><td>POST</td><td>/users</td></tr>
+            </table>
+            <ac:structured-macro ac:name="warning">
+                <ac:rich-text-body>Rate limited.</ac:rich-text-body>
+            </ac:structured-macro>
+            <h2>See Also</h2>
+            <ul>
+                <li><a href="/wiki/spaces/A/pages/1">Errors</a></li>
+                <li><a href="https://github.com">GitHub</a></li>
+            </ul>
+        "#;
+
+        let result = renderer.render("789", "API Docs", html);
+        assert!(result.is_ok());
+        let rendered = result.unwrap();
+
+        // Verify structure
+        assert!(rendered.lines.iter().any(|l| l.contains("# API Documentation")));
+        assert!(rendered.lines.iter().any(|l| l.contains("📑")));
+        assert!(rendered.lines.iter().any(|l| l.contains("## Authentication")));
+        assert!(rendered.lines.iter().any(|l| l.contains("ℹ")));
+        assert!(rendered.lines.iter().any(|l| l.contains("### Get Token")));
+        assert!(rendered.lines.iter().any(|l| l.contains("`/api/auth`")));
+        assert!(rendered.lines.iter().any(|l| l.contains("BASH")));
+        assert!(rendered.lines.iter().any(|l| l.contains("## Endpoints")));
+        assert!(rendered.lines.iter().any(|l| l.contains("GET")));
+        assert!(rendered.lines.iter().any(|l| l.contains("⚠")));
+        // Internal link should have arrow indicator
+        assert!(rendered.lines.iter().any(|l| l.contains("Errors") && l.contains("→")));
+
+        // External link (GitHub) should NOT have arrow
+        let combined = rendered.lines.join("\n");
+        assert!(combined.contains("GitHub"));
+        // GitHub link should appear without arrow (external link)
+        assert!(!combined.contains("GitHub →"));
+    }
+
+    #[test]
+    fn test_renderer_reuse() {
+        let renderer = Renderer::new();
+
+        let r1 = renderer.render("1", "First", "<p>First</p>").unwrap();
+        let r2 = renderer.render("2", "Second", "<p>Second</p>").unwrap();
+
+        assert_eq!(r1.metadata.page_id, "1");
+        assert_eq!(r2.metadata.page_id, "2");
+    }
+
+    #[test]
+    fn test_malformed_html_graceful() {
+        let renderer = Renderer::new();
+        let html = "<p>Unclosed<div>Mixed <b>tags</p></div>";
+        let result = renderer.render("123", "Malformed", html);
+        assert!(result.is_ok());
     }
 }
