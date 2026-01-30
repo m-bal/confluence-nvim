@@ -99,6 +99,9 @@ pub struct PaginatedResponse<T> {
     pub size: usize,
 }
 
+/// Default pagination limit for API requests
+const PAGINATION_LIMIT: usize = 100;
+
 /// Confluence API client
 pub struct ConfluenceClient {
     base_url: String,
@@ -203,44 +206,62 @@ impl ConfluenceClient {
         })
     }
 
-    /// List all spaces (C-04: Added size limit)
-    pub async fn list_spaces(&self) -> Result<Vec<Space>, ApiError> {
-        let url = format!("{}/rest/api/space", self.base_url);
+    /// Fetch all pages of results from a paginated endpoint
+    async fn fetch_all_pages<T: serde::de::DeserializeOwned + Clone>(
+        &self,
+        base_url: &str,
+    ) -> Result<Vec<T>, ApiError> {
+        let mut all_results: Vec<T> = Vec::new();
+        let mut start: usize = 0;
 
-        let response = self
-            .retry_policy
-            .execute(|| self.get(&url))
-            .await?;
+        loop {
+            // Build URL with pagination parameters
+            let separator = if base_url.contains('?') { '&' } else { '?' };
+            let url = format!("{}{}limit={}&start={}", base_url, separator, PAGINATION_LIMIT, start);
 
-        if response.status().is_success() {
-            let paginated: PaginatedResponse<Space> = self.parse_json_with_size_limit(response).await?;
-            Ok(paginated.results)
-        } else {
-            self.handle_error_response(response).await
+            let response = self
+                .retry_policy
+                .execute(|| self.get(&url))
+                .await?;
+
+            if !response.status().is_success() {
+                return self.handle_error_response(response).await;
+            }
+
+            let paginated: PaginatedResponse<T> = self.parse_json_with_size_limit(response).await?;
+
+            // Append results
+            all_results.extend(paginated.results);
+
+            // Check if there are more pages
+            if paginated.size < paginated.limit {
+                // No more pages
+                break;
+            }
+
+            // Move to next page
+            start += paginated.limit;
         }
+
+        Ok(all_results)
     }
 
-    /// List pages in a space (C-04: Added size limit)
+    /// List all spaces with full pagination (C-04: Added size limit)
+    pub async fn list_spaces(&self) -> Result<Vec<Space>, ApiError> {
+        let url = format!("{}/rest/api/space", self.base_url);
+        self.fetch_all_pages(&url).await
+    }
+
+    /// List pages in a space with full pagination (C-04: Added size limit)
     pub async fn list_pages(&self, space_key: &str) -> Result<Vec<Page>, ApiError> {
         let url = format!(
             "{}/rest/api/space/{}/content/page?expand=space",
             self.base_url, space_key
         );
-
-        let response = self
-            .retry_policy
-            .execute(|| self.get(&url))
-            .await?;
-
-        if response.status().is_success() {
-            let paginated: PaginatedResponse<Page> = self.parse_json_with_size_limit(response).await?;
-            Ok(paginated.results)
-        } else {
-            self.handle_error_response(response).await
-        }
+        self.fetch_all_pages(&url).await
     }
 
-    /// Search Confluence content (C-03: Added CQL sanitization, C-04: Added size limit)
+    /// Search Confluence content with full pagination (C-03: Added CQL sanitization, C-04: Added size limit)
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>, ApiError> {
         // Sanitize user query and wrap in text search
         let sanitized = Self::sanitize_cql_value(query);
@@ -251,18 +272,7 @@ impl ConfluenceClient {
             self.base_url,
             urlencoding::encode(&cql)
         );
-
-        let response = self
-            .retry_policy
-            .execute(|| self.get(&url))
-            .await?;
-
-        if response.status().is_success() {
-            let paginated: PaginatedResponse<SearchResult> = self.parse_json_with_size_limit(response).await?;
-            Ok(paginated.results)
-        } else {
-            self.handle_error_response(response).await
-        }
+        self.fetch_all_pages(&url).await
     }
 
     /// Build a GET request with authentication

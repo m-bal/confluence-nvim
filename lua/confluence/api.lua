@@ -93,6 +93,9 @@ local function debug_log(message)
   end
 end
 
+--- Default pagination limit (fetch more than the Confluence default of 25)
+local PAGINATION_LIMIT = 100
+
 --- Make authenticated API request
 ---@param endpoint string API endpoint path
 ---@param callback function Callback function (error, result)
@@ -214,38 +217,84 @@ local function api_request(endpoint, callback)
   })
 end
 
---- List all Confluence spaces
+--- Make paginated API request (fetches all pages of results)
+---@param base_endpoint string Base API endpoint (without pagination params)
+---@param callback function Callback (error, all_results)
+---@param accumulated_results table|nil Accumulated results from previous pages
+---@param start number|nil Starting offset for pagination
+local function paginated_api_request(base_endpoint, callback, accumulated_results, start)
+  accumulated_results = accumulated_results or {}
+  start = start or 0
+
+  -- Build URL with pagination parameters
+  local separator = base_endpoint:find('?') and '&' or '?'
+  local endpoint = base_endpoint .. separator .. 'limit=' .. PAGINATION_LIMIT .. '&start=' .. start
+
+  debug_log('Paginated request: ' .. endpoint)
+
+  api_request(endpoint, function(err, result)
+    if err then
+      callback(err, nil)
+      return
+    end
+
+    -- Extract results from response
+    local results = result.results or {}
+    debug_log('Page fetched: ' .. #results .. ' results (start=' .. start .. ')')
+
+    -- Append new results to accumulated results
+    for _, item in ipairs(results) do
+      table.insert(accumulated_results, item)
+    end
+
+    -- Check if there are more pages
+    -- Confluence indicates more pages when size equals limit
+    local size = result.size or #results
+    local limit = result.limit or PAGINATION_LIMIT
+
+    if size >= limit then
+      -- There might be more results, fetch next page
+      local next_start = start + limit
+      debug_log('Fetching next page starting at ' .. next_start)
+      paginated_api_request(base_endpoint, callback, accumulated_results, next_start)
+    else
+      -- No more pages, return all accumulated results
+      debug_log('Pagination complete: ' .. #accumulated_results .. ' total results')
+      callback(nil, accumulated_results)
+    end
+  end)
+end
+
+--- List all Confluence spaces (with full pagination)
 ---@param callback function Callback (error, spaces)
 function M.list_spaces(callback)
-  debug_log('Fetching spaces...')
-  api_request('/rest/api/space', function(err, result)
+  debug_log('Fetching all spaces with pagination...')
+  paginated_api_request('/rest/api/space', function(err, spaces)
     if err then
       callback(err, nil)
     else
-      local spaces = result.results or {}
-      debug_log('Found ' .. #spaces .. ' spaces')
+      debug_log('Found ' .. #spaces .. ' total spaces')
       callback(nil, spaces)
     end
   end)
 end
 
---- List pages in a space
+--- List pages in a space (with full pagination)
 ---@param space_key string Space key
 ---@param callback function Callback (error, pages)
 function M.list_pages(space_key, callback)
-  debug_log('Fetching pages for space: ' .. space_key)
-  api_request('/rest/api/space/' .. space_key .. '/content/page?expand=space', function(err, result)
+  debug_log('Fetching all pages for space: ' .. space_key)
+  paginated_api_request('/rest/api/space/' .. space_key .. '/content/page?expand=space', function(err, pages)
     if err then
       callback(err, nil)
     else
-      local pages = result.results or {}
-      debug_log('Found ' .. #pages .. ' pages')
+      debug_log('Found ' .. #pages .. ' total pages')
       callback(nil, pages)
     end
   end)
 end
 
---- Search Confluence content
+--- Search Confluence content (with full pagination)
 ---@param query string Search query
 ---@param callback function Callback (error, results)
 function M.search(query, callback)
@@ -257,12 +306,11 @@ function M.search(query, callback)
   local encoded_cql = vim.uri_encode(cql)
 
   debug_log('Searching for: ' .. query)
-  api_request('/rest/api/content/search?cql=' .. encoded_cql, function(err, result)
+  paginated_api_request('/rest/api/content/search?cql=' .. encoded_cql, function(err, results)
     if err then
       callback(err, nil)
     else
-      local results = result.results or {}
-      debug_log('Found ' .. #results .. ' search results')
+      debug_log('Found ' .. #results .. ' total search results')
       callback(nil, results)
     end
   end)
